@@ -1,0 +1,193 @@
+---
+title: Returns
+description: Decorator for declaring response types on @Res() routes
+---
+
+The `@Returns<T>()` decorator declares the response type for controller methods that use `@Res()` (raw response object). This is a **compile-time only** decorator that enables OpenAPI generation for routes that bypass NestJS's automatic response handling.
+
+## Import
+
+```typescript
+import { Returns } from '@tsgonest/runtime';
+import type { ReturnsOptions } from '@tsgonest/runtime';
+```
+
+## Function Signature
+
+```typescript
+function Returns<T>(options?: ReturnsOptions): MethodDecorator
+```
+
+### Type Parameters
+
+<ParamField path="T" type="type" required>
+  The response type. tsgonest's static analyzer reads this type parameter to generate the OpenAPI response schema.
+</ParamField>
+
+### Parameters
+
+<ParamField path="options" type="ReturnsOptions">
+  Optional configuration for the response
+
+  <Expandable title="properties">
+    <ResponseField name="contentType" type="string">
+      Override the response content type in OpenAPI. Defaults to `application/json`.
+      
+      Examples: `'application/pdf'`, `'text/csv'`, `'image/png'`
+    </ResponseField>
+
+    <ResponseField name="description" type="string">
+      Human-readable description for the OpenAPI response.
+      
+      Example: `'PDF report document'`
+    </ResponseField>
+
+    <ResponseField name="status" type="number">
+      Override the HTTP status code for the success response in OpenAPI.
+      When set, takes precedence over `@HttpCode()`.
+      
+      Example: `201`, `204`
+    </ResponseField>
+  </Expandable>
+</ParamField>
+
+## Why Use @Returns?
+
+Without `@Returns`, routes using `@Res()` produce an **empty (void) response** in OpenAPI and emit a warning during build. The decorator tells tsgonest what type the route actually returns.
+
+<Warning>
+  `@Returns` is **compile-time only**. It has no effect at runtime. The decorator exists purely for tsgonest's static analyzer.
+</Warning>
+
+## Examples
+
+### JSON Response
+
+```typescript
+import { Controller, Get, Param, Res } from '@nestjs/common';
+import { Returns } from '@tsgonest/runtime';
+import type { FastifyReply } from 'fastify';
+import type { UserDto } from './user.dto';
+
+@Controller('users')
+export class UserController {
+  @Returns<UserDto>()
+  @Get(':id')
+  async getUser(@Param('id') id: string, @Res() res: FastifyReply) {
+    const user = await this.userService.findOne(id);
+    res.send(user);
+  }
+}
+```
+
+**Generated OpenAPI:**
+
+```yaml
+/users/{id}:
+  get:
+    responses:
+      '200':
+        description: OK
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserDto'
+```
+
+### Binary Response with Custom Content Type
+
+```typescript
+import { Controller, Get, Param, Res } from '@nestjs/common';
+import { Returns } from '@tsgonest/runtime';
+import type { FastifyReply } from 'fastify';
+
+@Controller('invoices')
+export class InvoiceController {
+  @Returns<Uint8Array>({
+    contentType: 'application/pdf',
+    description: 'Invoice PDF document'
+  })
+  @Get(':id/pdf')
+  async getInvoicePdf(@Param('id') id: string, @Res() res: FastifyReply) {
+    const pdf = await this.invoiceService.generatePdf(id);
+    res.header('Content-Type', 'application/pdf').send(pdf);
+  }
+}
+```
+
+**Generated OpenAPI:**
+
+```yaml
+/invoices/{id}/pdf:
+  get:
+    responses:
+      '200':
+        description: Invoice PDF document
+        content:
+          application/pdf:
+            schema:
+              type: string
+              format: binary
+```
+
+### CSV Export
+
+```typescript
+import { Controller, Get, Res } from '@nestjs/common';
+import { Returns } from '@tsgonest/runtime';
+import type { FastifyReply } from 'fastify';
+
+@Controller('reports')
+export class ReportController {
+  @Returns<string>({
+    contentType: 'text/csv',
+    description: 'User report in CSV format'
+  })
+  @Get('users.csv')
+  async exportUsers(@Res() res: FastifyReply) {
+    const csv = await this.reportService.generateUsersCsv();
+    res.header('Content-Type', 'text/csv')
+       .header('Content-Disposition', 'attachment; filename="users.csv"')
+       .send(csv);
+  }
+}
+```
+
+### Custom Status Code
+
+```typescript
+import { Controller, Post, Body, Res } from '@nestjs/common';
+import { Returns } from '@tsgonest/runtime';
+import type { FastifyReply } from 'fastify';
+import type { UserDto } from './user.dto';
+
+@Controller('users')
+export class UserController {
+  @Returns<UserDto>({ status: 201 })
+  @Post()
+  async create(@Body() dto: CreateUserDto, @Res() res: FastifyReply) {
+    const user = await this.userService.create(dto);
+    res.status(201).send(user);
+  }
+}
+```
+
+## When to Use @Res()
+
+Use `@Res()` (and therefore `@Returns`) when you need:
+
+- **Custom headers** - Setting Content-Disposition, Cache-Control, etc.
+- **Binary responses** - PDFs, images, file downloads
+- **Streaming responses** - Large files, video streaming
+- **Custom status codes** - Beyond what `@HttpCode()` provides
+- **Fine-grained control** - Response buffering, compression settings
+
+<Info>
+  For standard JSON responses, prefer returning values directly (no `@Res()`). tsgonest automatically serializes and generates OpenAPI.
+</Info>
+
+## See Also
+
+- [OpenAPI Returns Guide](/guides/openapi-returns) — Complete guide to response type documentation
+- [Serialization Runtime](/guides/serialization-runtime) — Automatic serialization for standard responses
+- [OpenAPI Controllers](/guides/openapi-controllers) — Controller-based OpenAPI generation

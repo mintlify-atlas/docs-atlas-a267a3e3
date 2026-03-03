@@ -1,0 +1,249 @@
+---
+title: EventStream
+description: Decorator for type-safe Server-Sent Events with async iterators
+---
+
+The `@EventStream()` decorator declares a controller method as a Server-Sent Events endpoint that returns an async iterator (or sync iterator) instead of an rxjs Observable. It provides full type safety with compile-time validation and serialization.
+
+## Import
+
+```typescript
+import { EventStream } from '@tsgonest/runtime';
+import type { EventStreamOptions, SseEvent, SseEvents } from '@tsgonest/runtime';
+```
+
+## Function Signature
+
+```typescript
+function EventStream(
+  path?: string,
+  options?: EventStreamOptions
+): MethodDecorator
+```
+
+### Parameters
+
+<ParamField path="path" type="string">
+  Route path for the SSE endpoint. Defaults to `'/'`.
+
+  Examples: `'events'`, `'notifications'`, `'stream'`
+</ParamField>
+
+<ParamField path="options" type="EventStreamOptions">
+  Optional configuration
+
+  <Expandable title="properties">
+    <ResponseField name="heartbeat" type="number">
+      Heartbeat interval in milliseconds. When set, the interceptor emits empty keep-alive frames at this interval to prevent proxy/load-balancer timeouts.
+      
+      Set to `0` or omit to disable. Common values: `15000` (15s), `30000` (30s)
+    </ResponseField>
+  </Expandable>
+</ParamField>
+
+## Features
+
+<CardGroup cols={2}>
+  <Card title="Type Safety" icon="shield-check">
+    Typed data payloads via `SseEvent<E, T>` and discriminated unions via `SseEvents<M>`
+  </Card>
+  <Card title="Compile-Time Validation" icon="check-circle">
+    Automatic validation and fast serialization of each event's data
+  </Card>
+  <Card title="Resource Cleanup" icon="trash">
+    Automatic `iterator.return()` call on client disconnect
+  </Card>
+  <Card title="NestJS Compatible" icon="plug">
+    Sets standard NestJS SSE metadata for Express/Fastify compatibility
+  </Card>
+</CardGroup>
+
+## Why Use @EventStream?
+
+`@EventStream` replaces NestJS's `@Sse()` decorator with several advantages:
+
+- **Async iterators** instead of rxjs Observables (simpler for streaming data)
+- **Type-safe events** with discriminated unions
+- **Compile-time validation** of event payloads
+- **Automatic cleanup** when clients disconnect
+- **Heartbeat support** to prevent connection timeouts
+
+## Examples
+
+### Simple Single-Type SSE
+
+```typescript
+import { Controller } from '@nestjs/common';
+import { EventStream, SseEvent } from '@tsgonest/runtime';
+import type { NotificationDto } from './notification.dto';
+
+@Controller('notifications')
+export class NotificationController {
+  @EventStream('stream')
+  async *stream(): AsyncGenerator<SseEvent<'notification', NotificationDto>> {
+    for await (const notification of this.notificationService.watch()) {
+      yield {
+        event: 'notification',
+        data: notification
+      };
+    }
+  }
+}
+```
+
+**Client usage:**
+
+```typescript
+const eventSource = new EventSource('/notifications/stream');
+
+eventSource.addEventListener('notification', (e) => {
+  const data = JSON.parse(e.data);
+  console.log('Notification:', data);
+});
+```
+
+### Discriminated Multi-Type SSE
+
+```typescript
+import { Controller } from '@nestjs/common';
+import { EventStream, SseEvents } from '@tsgonest/runtime';
+import type { UserDto } from './user.dto';
+
+type UserEvents = SseEvents<{
+  created: UserDto;
+  updated: UserDto;
+  deleted: { id: string };
+}>;
+
+@Controller('users')
+export class UserController {
+  @EventStream('events')
+  async *events(): AsyncGenerator<UserEvents> {
+    const cursor = await this.db.watchChanges();
+    try {
+      for await (const change of cursor) {
+        if (change.operationType === 'insert') {
+          yield { event: 'created', data: change.fullDocument };
+        } else if (change.operationType === 'update') {
+          yield { event: 'updated', data: change.fullDocument };
+        } else if (change.operationType === 'delete') {
+          yield { event: 'deleted', data: { id: change.documentKey._id } };
+        }
+      }
+    } finally {
+      await cursor.close(); // Runs on client disconnect
+    }
+  }
+}
+```
+
+**Client usage:**
+
+```typescript
+const eventSource = new EventSource('/users/events');
+
+eventSource.addEventListener('created', (e) => {
+  const user = JSON.parse(e.data);
+  console.log('User created:', user);
+});
+
+eventSource.addEventListener('updated', (e) => {
+  const user = JSON.parse(e.data);
+  console.log('User updated:', user);
+});
+
+eventSource.addEventListener('deleted', (e) => {
+  const { id } = JSON.parse(e.data);
+  console.log('User deleted:', id);
+});
+```
+
+### With Heartbeat
+
+```typescript
+import { Controller } from '@nestjs/common';
+import { EventStream, SseEvent } from '@tsgonest/runtime';
+import type { StockPriceDto } from './stock.dto';
+
+@Controller('stocks')
+export class StockController {
+  @EventStream('prices', { heartbeat: 30_000 }) // 30 second heartbeat
+  async *streamPrices(): AsyncGenerator<SseEvent<'price', StockPriceDto>> {
+    while (true) {
+      const prices = await this.stockService.getCurrentPrices();
+      for (const price of prices) {
+        yield { event: 'price', data: price };
+      }
+      await new Promise(resolve => setTimeout(resolve, 1000)); // Update every second
+    }
+  }
+}
+```
+
+### Resource Cleanup on Disconnect
+
+```typescript
+import { Controller } from '@nestjs/common';
+import { EventStream, SseEvent } from '@tsgonest/runtime';
+
+@Controller('logs')
+export class LogController {
+  @EventStream('stream')
+  async *streamLogs(): AsyncGenerator<SseEvent<'log', LogEntryDto>> {
+    const watcher = this.logService.createWatcher();
+    
+    try {
+      for await (const entry of watcher) {
+        yield { event: 'log', data: entry };
+      }
+    } finally {
+      // This runs automatically when the client disconnects
+      await watcher.close();
+      console.log('Client disconnected, watcher closed');
+    }
+  }
+}
+```
+
+## How It Works
+
+1. **Decorator metadata** - `@EventStream()` sets NestJS-compatible metadata (`path`, `method`, `__sse__`)
+2. **Compile-time rewrite** - tsgonest wraps your iterator with validation and serialization
+3. **Interceptor bridge** - `TsgonestSseInterceptor` converts the async iterator to an Observable
+4. **NestJS SSE protocol** - Standard SSE headers, streaming, and socket tuning
+5. **Cleanup on disconnect** - Automatic `iterator.return()` when the client closes the connection
+
+## OpenAPI Generation
+
+`@EventStream` routes appear in your OpenAPI spec:
+
+```yaml
+/users/events:
+  get:
+    summary: Server-Sent Events endpoint
+    responses:
+      '200':
+        description: OK
+        content:
+          text/event-stream:
+            schema:
+              type: object
+              properties:
+                event:
+                  type: string
+                  enum: [created, updated, deleted]
+                data:
+                  oneOf:
+                    - $ref: '#/components/schemas/UserDto'
+                    - type: object
+                      properties:
+                        id:
+                          type: string
+```
+
+## See Also
+
+- [SSE Guide](/guides/openapi-sse) — Complete guide to Server-Sent Events
+- [SseEvent & SseEvents Types](/api/runtime/interceptors#sse-types) — Type definitions for SSE events
+- [TsgonestSseInterceptor](/api/runtime/interceptors#tsgonest-sse-interceptor) — Internal interceptor for SSE
+- [OpenAPI Controllers](/guides/openapi-controllers) — Controller-based OpenAPI generation

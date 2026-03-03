@@ -1,0 +1,217 @@
+---
+title: Interceptors
+description: Internal NestJS interceptors for serialization and SSE
+---
+
+The `@tsgonest/runtime` package exports several NestJS interceptors that are automatically injected by the tsgonest compiler. You typically don't need to use these directly.
+
+## TsgonestSerializeInterceptor
+
+NestJS interceptor that sets `Content-Type: application/json` for controller methods that return pre-serialized JSON strings.
+
+### How It Works
+
+tsgonest's compile-time rewrite wraps controller return values with `stringifyXxx(await expr)`, which returns a JSON string. Without this interceptor, NestJS/Fastify would send the string as `text/plain` or double-quote it.
+
+With this interceptor, the Content-Type header is set to `application/json` **before** the response is sent, so Fastify sends the JSON string as-is.
+
+### Auto-Injection
+
+This interceptor is **automatically injected** by `tsgonest build` on controller classes that have response serialization enabled.
+
+```typescript
+// Your code:
+@Controller('users')
+export class UserController {
+  @Get(':id')
+  async getUser(@Param('id') id: string): Promise<UserDto> {
+    return await this.userService.findOne(id);
+  }
+}
+
+// After tsgonest rewrite:
+import { TsgonestSerializeInterceptor } from '@tsgonest/runtime';
+import { UseInterceptors } from '@nestjs/common';
+
+@Controller('users')
+@UseInterceptors(TsgonestSerializeInterceptor)
+export class UserController {
+  @Get(':id')
+  async getUser(@Param('id') id: string): Promise<UserDto> {
+    return stringifyUserDto(await this.userService.findOne(id));
+  }
+}
+```
+
+### Manual Usage
+
+You can manually apply this interceptor if needed:
+
+```typescript
+import { Controller, UseInterceptors } from '@nestjs/common';
+import { TsgonestSerializeInterceptor } from '@tsgonest/runtime';
+
+@Controller('custom')
+@UseInterceptors(TsgonestSerializeInterceptor)
+export class CustomController {
+  // Your methods here
+}
+```
+
+## TsgonestSseInterceptor
+
+NestJS interceptor that bridges async iterators to rxjs Observables for Server-Sent Events endpoints.
+
+### How It Works
+
+1. Checks for `TSGONEST_SSE_METADATA` on the method descriptor
+2. Converts the async iterator to an Observable
+3. Applies per-event validation and serialization transforms
+4. Implements heartbeat keep-alive frames
+5. Ensures `iterator.return()` is called on client disconnect
+
+### Auto-Injection
+
+This interceptor is **automatically injected** by `tsgonest build` on controller classes that use `@EventStream()`.
+
+```typescript
+// Your code:
+import { Controller } from '@nestjs/common';
+import { EventStream, SseEvent } from '@tsgonest/runtime';
+
+@Controller('events')
+export class EventController {
+  @EventStream('stream')
+  async *stream(): AsyncGenerator<SseEvent<'msg', MessageDto>> {
+    yield { event: 'msg', data: { text: 'Hello' } };
+  }
+}
+
+// After tsgonest rewrite:
+import { TsgonestSseInterceptor } from '@tsgonest/runtime';
+import { UseInterceptors } from '@nestjs/common';
+
+@Controller('events')
+@UseInterceptors(TsgonestSseInterceptor)
+export class EventController {
+  // ... interceptor handles conversion to Observable
+}
+```
+
+### Configuration
+
+The interceptor reads configuration from the `TSGONEST_SSE_METADATA` key set by `@EventStream()`:
+
+- `heartbeat` - Interval in milliseconds for keep-alive frames
+
+## SSE Types
+
+### SseEvent&lt;E, T&gt;
+
+A typed SSE event with a generic event name `E` (string literal discriminant) and data payload `T`:
+
+```typescript
+interface SseEvent<E extends string, T> {
+  event: E;
+  data: T;
+  id?: string;
+  retry?: number;
+}
+```
+
+**Fields:**
+
+<ParamField path="event" type="E" required>
+  Event name (discriminant). Client listens with `eventSource.addEventListener(event, ...)`
+</ParamField>
+
+<ParamField path="data" type="T" required>
+  Event payload. Automatically validated and serialized by tsgonest.
+</ParamField>
+
+<ParamField path="id" type="string">
+  Optional event ID for client-side replay. Sets the `id:` field in SSE protocol.
+</ParamField>
+
+<ParamField path="retry" type="number">
+  Optional reconnection time in milliseconds. Sets the `retry:` field in SSE protocol.
+</ParamField>
+
+**Example:**
+
+```typescript
+import type { SseEvent } from '@tsgonest/runtime';
+
+type NotificationEvent = SseEvent<'notification', NotificationDto>;
+
+const event: NotificationEvent = {
+  event: 'notification',
+  data: { message: 'Hello', timestamp: new Date() },
+  id: '123'
+};
+```
+
+### SseEvents&lt;M&gt;
+
+Converts a record of event names → payload types into a discriminated union:
+
+```typescript
+type SseEvents<M extends Record<string, any>> = {
+  [K in keyof M]: SseEvent<K & string, M[K]>;
+}[keyof M];
+```
+
+**Example:**
+
+```typescript
+import type { SseEvents } from '@tsgonest/runtime';
+
+type UserEvents = SseEvents<{
+  created: UserDto;
+  updated: UserDto;
+  deleted: { id: string };
+}>;
+
+// Equivalent to:
+type UserEvents =
+  | SseEvent<'created', UserDto>
+  | SseEvent<'updated', UserDto>
+  | SseEvent<'deleted', { id: string }>;
+
+// Usage:
+const events: UserEvents[] = [
+  { event: 'created', data: { id: '1', name: 'Alice' } },
+  { event: 'updated', data: { id: '1', name: 'Alice Smith' } },
+  { event: 'deleted', data: { id: '1' } }
+];
+```
+
+## Internal Metadata Keys
+
+These constants are used internally by the compiler and interceptors:
+
+### TSGONEST_SSE_METADATA
+
+Metadata key set on the method descriptor by `@EventStream()`. The `TsgonestSseInterceptor` checks for this to activate iterator→Observable bridging.
+
+```typescript
+export const TSGONEST_SSE_METADATA = '__tsgonest_sse__';
+```
+
+### TSGONEST_SSE_TRANSFORMS
+
+Metadata key set by the tsgonest compile-time rewriter on the controller prototype. Contains per-event-name `[assertFn, stringifyFn]` pairs for validation and serialization.
+
+```typescript
+export const TSGONEST_SSE_TRANSFORMS = '__tsgonest_sse_transforms__';
+```
+
+<Warning>
+  These are internal implementation details. Do not use them directly in your application code.
+</Warning>
+
+## See Also
+
+- [EventStream Decorator](/api/runtime/event-stream) — Type-safe SSE decorator
+- [SSE Guide](/guides/openapi-sse) — Complete guide to Server-Sent Events
+- [Serialization Runtime](/guides/serialization-runtime) — Automatic serialization

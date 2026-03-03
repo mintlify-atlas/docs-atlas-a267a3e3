@@ -90,7 +90,10 @@
             "pages": [
               "api/runtime/define-config",
               "api/runtime/validation-error",
-              "api/runtime/form-data"
+              "api/runtime/form-data",
+              "api/runtime/returns",
+              "api/runtime/event-stream",
+              "api/runtime/interceptors"
             ]
           },
           {

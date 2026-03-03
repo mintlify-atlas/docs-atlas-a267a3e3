@@ -1,80 +1,343 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quick Start
+description: Get up and running with tsgonest in minutes
 ---
 
-## Get started in three steps
+# Quick Start
 
-Get your documentation site running locally and make your first customization.
+Get a NestJS application with type-safe validation and OpenAPI generation running in minutes.
 
-### Step 1: Set up your local environment
+## Prerequisites
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+- Node.js 18 or higher
+- pnpm, npm, or yarn
+- An existing NestJS project or a new one
 
-### Step 2: Deploy your changes
+## Installation
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+<Steps>
+  <Step title="Install tsgonest packages">
+    Install tsgonest and its runtime dependencies:
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+    <CodeGroup>
+    ```bash npm
+    npm install tsgonest @tsgonest/runtime @tsgonest/types
+    ```
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+    ```bash pnpm
+    pnpm add tsgonest @tsgonest/runtime @tsgonest/types
+    ```
 
-### Step 3: Go live
+    ```bash yarn
+    yarn add tsgonest @tsgonest/runtime @tsgonest/types
+    ```
+    </CodeGroup>
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+    <Info>
+    The platform-specific binary for your OS will be automatically installed (no postinstall scripts needed).
+    </Info>
+  </Step>
 
-## Next steps
+  <Step title="Create a DTO">
+    Create a new file `src/user/user.dto.ts` with validation constraints:
 
-Now that you have your docs running, explore these key features:
+    <CodeGroup>
+    ```typescript JSDoc (Zero Dependencies)
+    export interface CreateUserDto {
+      /**
+       * @minLength 1
+       * @maxLength 255
+       */
+      name: string;
+      /** @format email */
+      email: string;
+      /**
+       * @minimum 0
+       * @maximum 150
+       */
+      age: number;
+    }
+
+    export interface UserResponse {
+      id: number;
+      name: string;
+      email: string;
+      age: number;
+      createdAt: string;
+    }
+    ```
+
+    ```typescript Branded Types (Type-Safe)
+    import { tags } from '@tsgonest/types';
+
+    export interface CreateUserDto {
+      name: string & tags.MinLength<1> & tags.MaxLength<255>;
+      email: string & tags.Email;
+      age: number & tags.Minimum<0> & tags.Maximum<150>;
+    }
+
+    export interface UserResponse {
+      id: number;
+      name: string;
+      email: string;
+      age: number;
+      createdAt: string;
+    }
+    ```
+    </CodeGroup>
+
+    <Note>
+    Both approaches work identically at runtime. Branded types provide better autocomplete and type safety in your IDE.
+    </Note>
+  </Step>
+
+  <Step title="Create a controller">
+    Create `src/user/user.controller.ts`:
+
+    ```typescript
+    import { Controller, Get, Post, Body, Param } from '@nestjs/common';
+    import type { CreateUserDto, UserResponse } from './user.dto';
+
+    @Controller('users')
+    export class UserController {
+      @Post()
+      async create(@Body() body: CreateUserDto): Promise<UserResponse> {
+        // Body is automatically validated!
+        return {
+          id: 1,
+          name: body.name,
+          email: body.email,
+          age: body.age,
+          createdAt: new Date().toISOString(),
+        };
+      }
+
+      @Get(':id')
+      async findOne(@Param('id') id: string): Promise<UserResponse> {
+        // Param is automatically coerced to string and validated!
+        return {
+          id: parseInt(id),
+          name: 'John Doe',
+          email: 'john@example.com',
+          age: 30,
+          createdAt: new Date().toISOString(),
+        };
+      }
+    }
+    ```
+
+    <Info>
+    No validation pipes needed! tsgonest automatically injects validation for `@Body()`, `@Query()`, `@Param()`, and `@Headers()` at compile time.
+    </Info>
+  </Step>
+
+  <Step title="Create tsgonest config">
+    Create `tsgonest.config.json` in your project root:
+
+    ```json
+    {
+      "controllers": {
+        "include": ["src/**/*.controller.ts"]
+      },
+      "transforms": {
+        "validation": true,
+        "serialization": true
+      },
+      "openapi": {
+        "output": "dist/openapi.json"
+      }
+    }
+    ```
+
+    <Note>
+    You can also use `tsgonest.config.ts` with TypeScript for better autocomplete:
+
+    ```typescript
+    import { defineConfig } from '@tsgonest/runtime';
+
+    export default defineConfig({
+      controllers: {
+        include: ['src/**/*.controller.ts'],
+      },
+      transforms: {
+        validation: true,
+        serialization: true,
+      },
+      openapi: {
+        output: 'dist/openapi.json',
+      },
+    });
+    ```
+    </Note>
+  </Step>
+
+  <Step title="Build your project">
+    Replace `tsc` or `nest build` with tsgonest:
+
+    ```bash
+    npx tsgonest build
+    ```
+
+    You'll see output like:
+
+    ```
+    ✓ Compiled 12 files
+    ✓ Generated 4 companion files
+    ✓ Generated OpenAPI document → dist/openapi.json
+    ```
+  </Step>
+
+  <Step title="Run your application">
+    Start your NestJS application:
+
+    ```bash
+    node dist/main.js
+    ```
+
+    Or use watch mode with auto-restart:
+
+    ```bash
+    npx tsgonest dev
+    ```
+
+    <Info>
+    `tsgonest dev` replaces `nest start --watch` with faster rebuilds and automatic server restart.
+    </Info>
+  </Step>
+</Steps>
+
+## Test Your API
+
+Your API is now running with automatic validation!
+
+### Valid Request
+
+```bash
+curl -X POST http://localhost:3000/users \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "John Doe",
+    "email": "john@example.com",
+    "age": 30
+  }'
+```
+
+Response:
+```json
+{
+  "id": 1,
+  "name": "John Doe",
+  "email": "john@example.com",
+  "age": 30,
+  "createdAt": "2026-03-03T10:30:00.000Z"
+}
+```
+
+### Invalid Request (Validation Error)
+
+```bash
+curl -X POST http://localhost:3000/users \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "",
+    "email": "not-an-email",
+    "age": 200
+  }'
+```
+
+Response:
+```json
+{
+  "statusCode": 400,
+  "message": "Validation failed",
+  "errors": [
+    {
+      "path": "name",
+      "message": "minLength: expected length >= 1, got 0"
+    },
+    {
+      "path": "email",
+      "message": "format: expected email format"
+    },
+    {
+      "path": "age",
+      "message": "maximum: expected <= 150, got 200"
+    }
+  ]
+}
+```
+
+<Warning>
+Validation errors automatically return HTTP 400 with detailed error messages. You can customize error handling by catching `TsgonestValidationError` in your exception filters.
+</Warning>
+
+## View Your OpenAPI Documentation
+
+The generated `dist/openapi.json` contains a complete OpenAPI 3.2 specification:
+
+```bash
+cat dist/openapi.json
+```
+
+You can serve it with Swagger UI, Redocly, or any OpenAPI-compatible tool.
+
+## Package Scripts
+
+Update your `package.json` scripts to use tsgonest:
+
+```json
+{
+  "scripts": {
+    "build": "tsgonest build",
+    "dev": "tsgonest dev",
+    "start": "node dist/main.js",
+    "start:dev": "tsgonest dev",
+    "start:debug": "tsgonest dev --debug"
+  }
+}
+```
+
+## What's Happening Under the Hood?
+
+<Steps>
+  <Step title="Compilation">
+    tsgonest compiles your TypeScript files using tsgo (Go port of the TypeScript compiler) at native speed.
+  </Step>
+
+  <Step title="Type Analysis">
+    Static analysis extracts type metadata and validation constraints from your DTOs.
+  </Step>
+
+  <Step title="Code Generation">
+    For each DTO, companion files (`.tsgonest.js`) are generated with:
+    - `validate()` - Runtime validator
+    - `assert()` - Throws on validation failure
+    - `serialize()` - Fast JSON serializer
+    - `schema()` - JSON Schema representation
+  </Step>
+
+  <Step title="Controller Transformation">
+    Controller methods are transformed to inject validation for `@Body()`, `@Query()`, `@Param()`, and `@Headers()` parameters.
+  </Step>
+
+  <Step title="OpenAPI Generation">
+    An OpenAPI 3.2 document is generated from controller metadata and DTO schemas.
+  </Step>
+</Steps>
+
+## Next Steps
 
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="CLI Reference" icon="terminal" href="/cli/overview">
+    Learn about all available CLI commands and options
+  </Card>
+  <Card title="Configuration" icon="gear" href="/config/overview">
+    Customize tsgonest for your project needs
+  </Card>
+  <Card title="Validation Tags" icon="tags" href="/concepts/validation">
+    Complete reference of JSDoc and branded type constraints
+  </Card>
+  <Card title="Migration Guide" icon="arrow-right" href="/migration/from-nestia">
+    Migrate from class-validator and nestia
+  </Card>
 </CardGroup>
-
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>

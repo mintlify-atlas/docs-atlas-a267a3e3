@@ -1,0 +1,551 @@
+---
+title: Controller-Based OpenAPI
+description: Generate OpenAPI 3.2 documents from NestJS controllers — routes, methods, tags, metadata, and JSDoc comments.
+---
+
+tsgonest reads your NestJS controllers and extracts routes, HTTP methods, operation metadata, and tags through **static analysis** of standard NestJS decorators and JSDoc comments. No runtime reflection, no metadata files.
+
+## Quick Start
+
+Enable OpenAPI generation in your config:
+
+```ts title="tsgonest.config.ts"
+import { defineConfig } from '@tsgonest/runtime';
+
+export default defineConfig({
+  openapi: {
+    output: 'dist/openapi.json',
+    title: 'My API',
+    version: '1.0.0',
+  },
+});
+```
+
+Write a controller:
+
+```ts title="src/users/user.controller.ts"
+import { Controller, Get, Post, Body, Param } from '@nestjs/common';
+import type { CreateUserDto, UserResponse } from './user.dto';
+
+@Controller('users')
+export class UserController {
+  @Get()
+  async findAll(): Promise<UserResponse[]> {
+    return this.userService.findAll();
+  }
+
+  @Get(':id')
+  async findOne(@Param('id') id: string): Promise<UserResponse> {
+    return this.userService.findOne(id);
+  }
+
+  @Post()
+  async create(@Body() body: CreateUserDto): Promise<UserResponse> {
+    return this.userService.create(body);
+  }
+}
+```
+
+Run `tsgonest build` and you get:
+
+```json title="dist/openapi.json"
+{
+  "openapi": "3.2.0",
+  "info": {
+    "title": "My API",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/users": {
+      "get": {
+        "operationId": "findAll",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/UserResponse" }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/CreateUserDto" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/UserResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users/{id}": {
+      "get": {
+        "operationId": "findOne",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/UserResponse" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+## Controller Prefix
+
+The `@Controller()` decorator defines the base path:
+
+```ts
+@Controller('users')
+export class UsersController {
+  @Get()            // GET /users
+  @Get(':id')       // GET /users/{id}
+  @Post()           // POST /users
+}
+```
+
+Nested paths work as expected:
+
+```ts
+@Controller('organizations/:orgId/members')
+export class MembersController {
+  @Get()
+  findAll(@Param('orgId') orgId: string): MemberDto[] { ... }
+  // GET /organizations/{orgId}/members
+}
+```
+
+## HTTP Method Decorators
+
+All standard NestJS HTTP method decorators are supported:
+
+<Tabs>
+  <Tab title="Common Methods">
+    ```ts
+    import { Controller, Get, Post, Put, Delete, Patch } from '@nestjs/common';
+
+    @Controller('posts')
+    export class PostsController {
+      @Get()            // GET /posts (200)
+      findAll() { ... }
+
+      @Post()           // POST /posts (201)
+      create() { ... }
+
+      @Put(':id')       // PUT /posts/{id} (200)
+      update() { ... }
+
+      @Patch(':id')     // PATCH /posts/{id} (200)
+      partialUpdate() { ... }
+
+      @Delete(':id')    // DELETE /posts/{id} (200)
+      remove() { ... }
+    }
+    ```
+  </Tab>
+  <Tab title="All Methods">
+    | Decorator | HTTP Method | Default Status |
+    |---|---|---|
+    | `@Get()` | GET | 200 |
+    | `@Post()` | POST | **201** |
+    | `@Put()` | PUT | 200 |
+    | `@Delete()` | DELETE | 200 |
+    | `@Patch()` | PATCH | 200 |
+    | `@Head()` | HEAD | 200 |
+    | `@Options()` | OPTIONS | 200 |
+    | `@Sse()` | GET | 200 |
+    | `@EventStream()` | GET | 200 |
+  </Tab>
+</Tabs>
+
+Each decorator can take an optional sub-path:
+
+```ts
+@Controller('users')
+export class UsersController {
+  @Get('active')    // GET /users/active
+  @Post('bulk')     // POST /users/bulk
+}
+```
+
+## Operation IDs
+
+The **method name** becomes the `operationId` in the OpenAPI document:
+
+```ts
+@Controller('users')
+export class UsersController {
+  @Get()
+  findAll() { ... }    // operationId: "findAll"
+
+  @Get(':id')
+  findOne() { ... }    // operationId: "findOne"
+
+  @Post()
+  create() { ... }     // operationId: "create"
+
+  @Delete(':id')
+  remove() { ... }     // operationId: "remove"
+}
+```
+
+<Note>
+  Use descriptive method names — they serve double duty as both your code's API and the OpenAPI operation identifiers that SDK generators and documentation tools rely on.
+</Note>
+
+## Tags
+
+Tags are **automatically derived** from the controller class name by stripping the `Controller` suffix:
+
+| Class Name | Tag |
+|---|---|
+| `UsersController` | `Users` |
+| `AuthController` | `Auth` |
+| `OrderItemsController` | `OrderItems` |
+
+### Override with @tag
+
+Use the `@tag` JSDoc tag to override the default:
+
+```ts
+/**
+ * @tag Authentication
+ */
+@Controller('auth')
+export class AuthController {
+  // All operations tagged "Authentication" instead of "Auth"
+}
+```
+
+You can also apply `@tag` to individual methods:
+
+```ts
+@Controller('users')
+export class UsersController {
+  /**
+   * @tag Admin
+   */
+  @Delete(':id')
+  remove(@Param('id') id: string): void { ... }
+  // Tagged "Admin" instead of "Users"
+}
+```
+
+## Custom Status Codes
+
+Use `@HttpCode()` to override the default status code:
+
+```ts
+import { Controller, Post, Delete, HttpCode } from '@nestjs/common';
+
+@Controller('users')
+export class UsersController {
+  @Post('login')
+  @HttpCode(200) // Override POST's default 201
+  login(@Body() body: LoginDto): TokenDto { ... }
+
+  @Delete(':id')
+  @HttpCode(204) // No content
+  remove(@Param('id') id: string): void { ... }
+}
+```
+
+## JSDoc Metadata
+
+JSDoc comments on controller methods map directly to OpenAPI operation fields.
+
+### Summary and Description
+
+```ts
+/**
+ * Retrieves a paginated list of users with optional filtering.
+ *
+ * @summary List users
+ */
+@Get()
+findAll(@Query() query: PaginationDto): UserDto[] { ... }
+```
+
+- `@summary` → `summary` field in OpenAPI
+- JSDoc body text (first paragraph) → `description` field
+- You can also use `@description` explicitly
+
+### Deprecated
+
+```ts
+/**
+ * @deprecated Use findAllV2 instead.
+ */
+@Get()
+findAll(): UserDto[] { ... }
+```
+
+Marks the operation as `deprecated: true` in the OpenAPI document.
+
+### Hidden / Exclude
+
+```ts
+/**
+ * @hidden
+ */
+@Get('internal/health')
+healthCheck(): string { ... }
+```
+
+Routes marked with `@hidden` or `@exclude` are **omitted entirely** from the generated OpenAPI document. Use this for internal endpoints that shouldn't appear in public API docs.
+
+### Security
+
+```ts
+/**
+ * @security bearer
+ */
+@Get('profile')
+getProfile(): UserDto { ... }
+```
+
+For OAuth2 scopes:
+
+```ts
+/**
+ * @security oauth2 read:users write:users
+ */
+@Get()
+findAll(): UserDto[] { ... }
+```
+
+This adds the `security` field to the operation. The referenced security scheme must be defined in your [OpenAPI config](/config/options#openapi).
+
+### Error Responses
+
+```ts
+/**
+ * @throws {400} ValidationError
+ * @throws {404} NotFoundError
+ * @throws {403} ForbiddenError
+ */
+@Get(':id')
+findOne(@Param('id') id: string): UserDto { ... }
+```
+
+Each `@throws` tag generates an additional response entry in the operation. The syntax is `@throws {statusCode} TypeName`, where `TypeName` refers to a class or interface in your codebase.
+
+## Static Analysis Limits
+
+tsgonest uses **static analysis only**. The following patterns are not supported:
+
+<Warning>
+  **Runtime-generated controllers** are excluded:
+
+  ```ts
+  // ❌ Not supported — controller class declared inside factory function
+  export const makeController = (prefix: string) => {
+    @Controller(prefix)
+    class RuntimeController {
+      @Get('ok')
+      ok() { ... }
+    }
+    return RuntimeController;
+  };
+  ```
+
+  tsgonest emits a warning and skips this controller.
+</Warning>
+
+<Warning>
+  **Dynamic decorator paths** are excluded:
+
+  ```ts
+  // ❌ Not supported — path argument is a variable
+  const dynamicPath = 'active';
+
+  @Controller('users')
+  export class UsersController {
+    @Get(dynamicPath)
+    findActive() { ... }
+  }
+  ```
+
+  tsgonest emits a warning and skips this route.
+</Warning>
+
+## Comprehensive Example
+
+Here's a full controller using many features:
+
+```ts title="src/orders/order.controller.ts"
+import {
+  Controller, Get, Post, Delete,
+  Body, Param, Query, HttpCode,
+} from '@nestjs/common';
+import type {
+  CreateOrderDto, OrderDto,
+  OrderFilterDto, PaginatedResponse,
+} from './order.dto';
+
+/**
+ * @tag Orders
+ */
+@Controller('orders')
+export class OrdersController {
+  /**
+   * Returns a paginated list of orders for the authenticated user.
+   *
+   * @summary List orders
+   * @security bearer
+   */
+  @Get()
+  findAll(@Query() query: OrderFilterDto): PaginatedResponse<OrderDto> {
+    return this.ordersService.findAll(query);
+  }
+
+  /**
+   * Retrieve a single order by ID.
+   *
+   * @summary Get order
+   * @security bearer
+   * @throws {404} NotFoundError
+   */
+  @Get(':id')
+  findOne(@Param('id') id: string): OrderDto {
+    return this.ordersService.findOne(id);
+  }
+
+  /**
+   * Place a new order.
+   *
+   * @summary Create order
+   * @security bearer
+   * @throws {400} ValidationError
+   */
+  @Post()
+  create(@Body() body: CreateOrderDto): OrderDto {
+    return this.ordersService.create(body);
+  }
+
+  /**
+   * Cancel an order. Only pending orders can be cancelled.
+   *
+   * @summary Cancel order
+   * @security bearer
+   * @throws {404} NotFoundError
+   * @throws {409} ConflictError
+   */
+  @Delete(':id')
+  @HttpCode(204)
+  cancel(@Param('id') id: string): void {
+    this.ordersService.cancel(id);
+  }
+
+  /**
+   * @hidden
+   */
+  @Post('internal/recalculate')
+  recalculate(@Body() body: RecalculateDto): void {
+    this.ordersService.recalculate(body);
+  }
+}
+```
+
+This produces:
+
+- Six OpenAPI operations under `/orders` path
+- Proper tags ("Orders")
+- Security requirements (`bearer`)
+- Error responses (404, 409)
+- Custom status code (204)
+- Internal endpoint excluded (`@hidden`)
+
+All extracted via static analysis — no runtime overhead.
+
+## Tips & Tricks
+
+<Accordion title="Use method names for operation IDs">
+  ```ts
+  // ✅ Descriptive operation IDs
+  @Get()           findAll
+  @Get(':id')      findOne
+  @Post()          create
+  @Put(':id')      update
+  @Delete(':id')   remove
+
+  // ❌ Generic names
+  @Get()           get
+  @Post()          post
+  ```
+
+  SDK generators use operation IDs as method names.
+</Accordion>
+
+<Accordion title="Group related operations with tags">
+  ```ts
+  /**
+   * @tag User Management
+   */
+  @Controller('users')
+  export class UsersController { ... }
+
+  /**
+   * @tag User Management
+   */
+  @Controller('roles')
+  export class RolesController { ... }
+  ```
+
+  Both controllers appear under the same tag in API docs.
+</Accordion>
+
+<Accordion title="Document error responses">
+  ```ts
+  /**
+   * @throws {400} ValidationError
+   * @throws {401} UnauthorizedError
+   * @throws {404} NotFoundError
+   */
+  @Get(':id')
+  findOne(@Param('id') id: string): UserDto { ... }
+  ```
+
+  Helps API consumers handle errors correctly.
+</Accordion>
+
+<Accordion title="Hide internal endpoints">
+  ```ts
+  /**
+   * @hidden
+   */
+  @Get('internal/metrics')
+  getMetrics(): MetricsDto { ... }
+  ```
+
+  Keeps internal APIs out of public documentation.
+</Accordion>
+
+## Next Steps
+
+- [Parameter Documentation](/guides/openapi-parameters) — Query, path, body, and header parameters
+- [Return Type Documentation](/guides/openapi-returns) — Response types and @Returns decorator
+- [Server-Sent Events](/guides/openapi-sse) — Type-safe SSE with @EventStream
+- [API Versioning](/guides/openapi-versioning) — Global prefix and URI/header versioning

@@ -1,0 +1,596 @@
+---
+title: System Architecture
+description: Technical overview of tsgonest's architecture, compilation pipeline, and internal components.
+---
+
+tsgonest is a Go CLI that wraps Microsoft's [typescript-go](https://github.com/microsoft/typescript-go) (tsgo) compiler and extends it with validation, serialization, and OpenAPI generation for NestJS applications.
+
+## High-level overview
+
+tsgonest operates as a **multi-phase compilation pipeline**:
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│                     Phase 1: Compilation                     │
+│  ┌────────────┐   ┌─────────────┐   ┌────────────────┐     │
+│  │ Parse TS   │ → │ Type Check  │ → │ Emit JS        │     │
+│  │ (tsgo)     │   │ (tsgo)      │   │ (tsgo)         │     │
+│  └────────────┘   └─────────────┘   └────────────────┘     │
+└─────────────────────────────────────────────────────────────┘
+                            ↓
+┌─────────────────────────────────────────────────────────────┐
+│                  Phase 2: Post-Processing                    │
+│  ┌────────────┐   ┌─────────────┐   ┌────────────────┐     │
+│  │ Walk AST   │ → │ Extract     │ → │ Generate       │     │
+│  │ + Types    │   │ Metadata    │   │ Companions     │     │
+│  └────────────┘   └─────────────┘   └────────────────┘     │
+└─────────────────────────────────────────────────────────────┘
+                            ↓
+┌─────────────────────────────────────────────────────────────┐
+│                   Phase 3: Finalization                      │
+│  ┌────────────┐   ┌─────────────┐   ┌────────────────┐     │
+│  │ Rewrite    │ → │ Generate    │ → │ Write          │     │
+│  │ Controllers│   │ OpenAPI     │   │ Manifest       │     │
+│  └────────────┘   └─────────────┘   └────────────────┘     │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## Core components
+
+### 1. Compiler (`internal/compiler`)
+
+Wraps tsgo's program creation, incremental compilation, and diagnostic gathering.
+
+**Responsibilities:**
+- Create tsgo program (incremental or full rebuild)
+- Invoke tsgo's type checker
+- Gather and report diagnostics (type errors, warnings)
+- Emit JavaScript output
+
+**Key design decisions:**
+- Uses tsgo's incremental compilation when possible (~10x faster on warm builds)
+- Type errors are **fatal by default** (exit code 1) — can be disabled with `--no-check`
+- Diagnostics include path alias resolution for better error messages
+
+### 2. Analyzer (`internal/analyzer`)
+
+Walks the TypeScript AST and type checker to extract metadata from types and controllers.
+
+#### Type Walker
+
+Extracts type metadata for validation and serialization generation.
+
+**Responsibilities:**
+- Walk TypeScript types using tsgo's checker API
+- Extract constraints from JSDoc tags (`@minimum`, `@maximum`, `@pattern`, etc.)
+- Extract constraints from branded phantom types (`string & tags.Email`)
+- Detect discriminated unions for optimized codegen (O(1) switch-based validation)
+- Build a type registry mapping type names to metadata
+
+**Safety limits:**
+- Max recursion depth: 20 (prevents stack overflow from deeply recursive types)
+- Max total types: 500 (prevents memory exhaustion from wide type hierarchies like schema.org)
+
+**Constraint detection:**
+tsgonest supports **two syntax options** for defining constraints:
+
+1. **JSDoc tags** (zero dependencies):
+   ```ts
+   /**
+    * @minimum 0
+    * @maximum 150
+    */
+   age: number;
+   ```
+
+2. **Branded phantom types** (type-safe with autocomplete):
+   ```ts
+   import { tags } from '@tsgonest/types';
+   age: number & tags.Min<0> & tags.Max<150>;
+   ```
+
+Both are detected by the type walker. Branded types are identified by `__tsgonest_*` phantom properties. For migration compatibility, typia's `"typia.tag"` convention is also recognized.
+
+#### NestJS Analyzer
+
+Extracts route metadata from NestJS controllers for OpenAPI generation.
+
+**Responsibilities:**
+- Find all `@Controller()` classes
+- Extract route decorators (`@Get()`, `@Post()`, `@Put()`, `@Delete()`, `@Patch()`, `@All()`, `@Sse()`)
+- Extract parameter decorators (`@Body()`, `@Query()`, `@Param()`, `@Headers()`)
+- Resolve decorator types (supports import aliases via checker symbol resolution)
+- Extract JSDoc comments for descriptions
+- Detect dynamic/unsupported patterns and emit warnings
+
+**Static analysis limitations:**
+- Controllers must be **top-level classes** (not nested in factory functions)
+- Decorator paths must be **static string literals** (not variables)
+- Factory decorators are **opaque** (tsgonest cannot see through wrapper functions)
+
+When these patterns are detected, tsgonest warns and excludes the controller/route from OpenAPI.
+
+### 3. Metadata (`internal/metadata`)
+
+Defines the type metadata schema — a Go equivalent of typia's metadata format.
+
+**Core types:**
+- `TypeRegistry`: Map of type names to metadata
+- `Metadata`: Union of all possible type kinds
+- `KindObject`: Object/interface with properties
+- `KindArray`: Array type
+- `KindUnion`: Union type (including discriminated unions)
+- `KindLiteral`: String/number/boolean literals
+- `KindPrimitive`: Base types (string, number, boolean, etc.)
+- `KindRef`: Reference to another registered type
+
+**Constraint representation:**
+Constraints are stored as typed structs (not strings):
+```go
+type NumericConstraints struct {
+    Minimum          *float64
+    Maximum          *float64
+    ExclusiveMinimum *float64
+    ExclusiveMaximum *float64
+    MultipleOf       *float64
+}
+```
+
+### 4. Codegen (`internal/codegen`)
+
+Generates companion files (`.tsgonest.js` + `.tsgonest.d.ts`) with validation, assertion, serialization, and Standard Schema wrappers.
+
+**Responsibilities:**
+- Generate JavaScript validators (return `{ success: true, data: T }` or `{ success: false, errors: [...] }`)
+- Generate assertion functions (throw `TsgonestValidationError` on failure)
+- Generate fast JSON serializers (string concatenation with known property shapes)
+- Generate Standard Schema v1 wrappers
+- Generate TypeScript type declarations for all exports
+
+**Output structure:**
+```text
+dist/
+  user.dto.js                             # tsgo output
+  user.dto.CreateUserDto.tsgonest.js      # companion exports
+  user.dto.CreateUserDto.tsgonest.d.ts    # companion types
+```
+
+**Each companion exports:**
+- `validate{TypeName}(input: unknown): ValidationResult<T>`
+- `assert{TypeName}(input: unknown): T` (throws on error)
+- `serialize{TypeName}(input: T): string` (fast JSON.stringify replacement)
+- `serialize{TypeName}Obj(input: T): unknown` (returns object, not string)
+- `schema{TypeName}(): StandardSchema` (Standard Schema v1 wrapper)
+
+**Performance optimizations:**
+- **Discriminated union optimization**: O(1) switch statement on discriminant property (not linear `||` chain)
+- **String concatenation serialization**: `'"prop":' + value + ','` instead of generic object traversal
+- **Inline primitives**: No function calls for simple type checks
+
+**Validation performance:**
+- tsgonest validators: **16.8M ops/s** (simple DTO)
+- class-validator: **345K ops/s** (same DTO)
+- **48x faster** than class-validator
+
+**Serialization performance:**
+- tsgonest serializer: **13.2M ops/s** (simple DTO)
+- JSON.stringify: **9.8M ops/s** (same DTO)
+- **1.4x faster** than JSON.stringify for simple DTOs
+
+### 5. Rewrite (`internal/rewrite`)
+
+Rewrites compiled controller JavaScript to inject validation and serialization calls.
+
+**Responsibilities:**
+- Parse compiled JS with AST (not regex — safe and deterministic)
+- Inject `assert{TypeName}(...)` calls for `@Body()`, `@Query()`, `@Param()`, `@Headers()` parameters
+- Inject `serialize{TypeName}(...)` calls for return values (wrapped with `@Returns<T>()`)
+- Auto-insert `async` keyword for methods with return serialization (ensures `await` unwraps Promises before serialization)
+- Handle both ESM and CJS output formats
+- Preserve source structure (no formatting changes)
+
+**Example transformation:**
+```ts
+// Source controller (what you write):
+@Controller('users')
+export class UserController {
+  @Post()
+  create(@Body() dto: CreateUserDto): UserResponse {
+    return this.userService.create(dto);
+  }
+}
+```
+
+```js
+// Compiled output (what tsgonest generates):
+import { assertCreateUserDto } from './user.dto.CreateUserDto.tsgonest.js';
+import { serializeUserResponse } from './user.dto.UserResponse.tsgonest.js';
+
+export class UserController {
+  async create(dto) {
+    dto = assertCreateUserDto(dto); // injected validation
+    return serializeUserResponse(await this.userService.create(dto)); // injected serialization
+  }
+}
+```
+
+No runtime setup needed. No pipes. No interceptors. Everything is injected at build time.
+
+### 6. OpenAPI (`internal/openapi`)
+
+Generates OpenAPI 3.2 documents from NestJS controllers via static analysis.
+
+**Responsibilities:**
+- Convert controller metadata to OpenAPI paths/operations
+- Convert type metadata to OpenAPI schemas (JSON Schema dialect)
+- Resolve generic type instantiations (`PaginatedResponse<UserDto>` → `PaginatedResponse_UserDto`)
+- Generate security schemes from `@ApiSecurity()` decorators
+- Generate tags from controller names
+- Extract descriptions from JSDoc comments
+
+**Design decisions:**
+- **OpenAPI 3.2 only** (not 3.0 or 3.1)
+- **Static analysis** (no runtime reflection)
+- **Flat schemas** (no generic reconstruction — `PaginatedResponse_UserDto`, not `PaginatedResponse<UserDto>`)
+- **Generated at build time** (zero startup cost)
+
+**Generic type instantiation naming:**
+When a generic type like `PaginatedResponse<UserDto>` is used, the type walker generates a composite name:
+- Base name: `PaginatedResponse`
+- Type argument: `UserDto`
+- Registered as: `PaginatedResponse_UserDto`
+
+If the type argument is anonymous (e.g., `Wrapper<{ x: number }>`), the type is **inlined** instead of registered, and a warning is emitted.
+
+**Why flat schemas?**
+OpenAPI 3.2 has no concept of generics. All third-party tools (Swagger UI, Redocly, SDK generators) expect flat schemas. This is an intentional design decision for maximum compatibility.
+
+### 7. Build Cache (`internal/buildcache`)
+
+Caches post-processing results to skip companion/OpenAPI generation when source hasn't changed.
+
+**Responsibilities:**
+- Hash source file contents
+- Store cache in `outDir/.tsgonest-cache/`
+- Skip phases 2-3 when cache hit
+
+**Performance impact:**
+- Cold build (120 controllers, 838 routes): **~19s**
+- Warm build (cache hit): **~1.1s** (17x faster)
+
+### 8. SDK Generation (`internal/sdkgen`)
+
+Generates type-safe TypeScript SDK clients from OpenAPI documents.
+
+**Responsibilities:**
+- Convert OpenAPI paths to SDK method calls
+- Generate request/response types
+- Generate fetch-based client
+- Support custom error handling, timeouts, and hooks
+
+### 9. Watcher (`internal/watcher`)
+
+File system watcher for `tsgonest dev` mode.
+
+**Responsibilities:**
+- Watch `src/` for changes
+- Debounce rapid file changes
+- Trigger rebuild + restart
+- Forward stdout/stderr from Node.js process
+
+### 10. Config (`internal/config`)
+
+Parses and validates `tsgonest.config.ts` or `tsgonest.config.json`.
+
+**Responsibilities:**
+- Evaluate TypeScript config files via Node.js
+- Merge with CLI flags
+- Validate configuration schema
+- Provide defaults
+
+## Shim layer
+
+tsgonest accesses tsgo's **internal** (unexported) APIs via a shim layer using `go:linkname` and `unsafe.Pointer`.
+
+**How it works:**
+1. Each `shim/*/extra-shim.json` lists the tsgo functions/fields to expose
+2. `tools/gen_shims/main.go` generates Go wrapper code
+3. Wrappers use `go:linkname` directives to reach into tsgo's unexported symbols
+4. Unexported struct fields are accessed via `unsafe.Pointer` arithmetic
+
+**Example:**
+```go
+// Generated shim code:
+//go:linkname Checker_getPropertiesOfType github.com/microsoft/typescript-go/checker.(*Checker).getPropertiesOfType
+func Checker_getPropertiesOfType(recv *Checker, t Type) []Symbol
+```
+
+This pattern is borrowed from [tsgolint](https://github.com/oxc-project/tsgolint).
+
+**Why shims?**
+Direct API access provides:
+- Zero inter-process overhead (no subprocess calls)
+- Full type information from checker
+- Same compilation speed as raw tsgo
+
+## Compilation pipeline (detailed)
+
+### Step 1: Parse CLI args and config
+
+Location: `cmd/tsgonest/main.go`, `internal/config`
+
+1. Parse command-line flags
+2. Load `tsgonest.config.ts` or `tsgonest.config.json`
+3. Evaluate TypeScript config via Node.js (if `.ts`)
+4. Merge config with CLI flags (CLI wins)
+5. Validate final configuration
+
+### Step 2: Create tsgo program
+
+Location: `internal/compiler/program.go`
+
+1. Parse `tsconfig.json`
+2. Resolve source files
+3. Create tsgo program (incremental or full)
+4. Invoke type checker
+5. Gather diagnostics
+6. Report type errors (fatal by default)
+
+### Step 3: Emit JavaScript
+
+Location: `internal/compiler/emit.go`
+
+1. Emit JS via tsgo emitter
+2. Write files to `outDir`
+3. Copy `.d.ts` files if `declaration: true`
+
+### Step 4: Check build cache
+
+Location: `internal/buildcache`
+
+1. Hash all source file contents
+2. Check if cache exists and matches
+3. If cache hit: skip to Step 9
+4. If cache miss: continue to Step 5
+
+### Step 5: Walk AST and extract metadata
+
+Location: `internal/analyzer/type_walker.go`
+
+1. Pre-register all top-level types (classes, interfaces, type aliases)
+2. Walk each registered type:
+   - Extract properties
+   - Extract constraints (JSDoc + branded types)
+   - Detect discriminated unions
+   - Recurse into nested types
+3. Store metadata in type registry
+4. Apply `@Query()` / `@Param()` coercion rules
+
+### Step 6: Analyze NestJS controllers
+
+Location: `internal/analyzer/nestjs.go`
+
+1. Find all `@Controller()` classes
+2. For each controller:
+   - Extract path prefix
+   - Find all route handler methods
+   - Extract HTTP method + path
+   - Extract parameter decorators
+   - Resolve parameter types
+   - Extract JSDoc descriptions
+   - Detect `@Returns<T>()` decorators
+3. Warn and skip unsupported patterns
+4. Store controller metadata
+
+### Step 7: Generate companion files
+
+Location: `internal/codegen`
+
+1. For each type in registry (except controllers):
+   - Generate `validate{TypeName}` function
+   - Generate `assert{TypeName}` function
+   - Generate `serialize{TypeName}` function
+   - Generate `serialize{TypeName}Obj` function
+   - Generate `schema{TypeName}` function
+2. Write companion `.js` files
+3. Generate TypeScript `.d.ts` declarations
+
+### Step 8: Rewrite controllers
+
+Location: `internal/rewrite`
+
+1. For each compiled controller JS file:
+   - Parse AST
+   - Find methods with `@Body()`, `@Query()`, `@Param()`, `@Headers()` parameters
+   - Inject `assert{TypeName}(param)` calls
+   - Find methods with `@Returns<T>()` decorators
+   - Inject `serialize{TypeName}(await result)` calls
+   - Auto-insert `async` if needed
+   - Write modified JS back to disk
+
+### Step 9: Generate OpenAPI document
+
+Location: `internal/openapi/generator.go`
+
+1. Convert controller metadata to OpenAPI paths
+2. Convert type metadata to JSON Schema
+3. Resolve `$ref` pointers
+4. Add security schemes
+5. Add tags
+6. Write `openapi.json`
+
+### Step 10: Write manifest
+
+Location: `cmd/tsgonest/build.go`
+
+1. Generate `__tsgonest_manifest.json` with:
+   - List of all types with companions
+   - Mapping from type name to companion file path
+2. Used by runtime for dynamic discovery (if needed)
+
+### Step 11: Save build cache
+
+Location: `internal/buildcache`
+
+1. Store source file hashes
+2. Store type registry
+3. Store controller metadata
+4. Write cache to `outDir/.tsgonest-cache/`
+
+## Distribution model
+
+tsgonest uses a **multi-platform binary distribution** model:
+
+```text
+User installs:
+  npm install tsgonest
+
+tsgonest package (packages/core):
+  - Node.js launcher script (bin/tsgonest)
+  - optionalDependencies: @tsgonest/cli-* for all platforms
+
+@tsgonest/cli-darwin-arm64, cli-darwin-x64, cli-linux-arm64,
+cli-linux-x64, cli-win32-arm64, cli-win32-x64:
+  - Each contains a single native binary
+  - Binary is named `tsgonest` (or `tsgonest.exe` on Windows)
+
+Launcher script:
+  1. Detects platform (process.platform + process.arch)
+  2. Resolves correct @tsgonest/cli-* package via require.resolve
+  3. Spawns binary via execFileSync
+  4. Forwards stdin/stdout/stderr
+  5. Exits with same code
+```
+
+**No postinstall script** — binary resolution happens at runtime. This avoids postinstall failures and works reliably in CI.
+
+**Static Linux binaries** — built with `CGO_ENABLED=0` to work on both glibc and musl (Alpine).
+
+## Key design decisions
+
+### Why Go?
+
+1. **Direct access to tsgo internals** via shims (no subprocess overhead)
+2. **Native speed** — Go's compilation and memory management
+3. **Single binary distribution** — no runtime dependencies
+4. **Goroutine-based parallelism** for AST walking
+
+### Why not a TypeScript compiler plugin?
+
+1. **Plugin overhead** — ts-patch adds latency to every compilation
+2. **Setup complexity** — requires patching the TypeScript compiler
+3. **IDE compatibility issues** — language service plugins can break autocomplete
+4. **Tooling conflicts** — doesn't work with SWC, esbuild, or other non-tsc bundlers
+
+tsgonest avoids all of these by operating as a **standalone binary** that wraps tsgo.
+
+### Why companion files instead of inline codegen?
+
+1. **Bundle size** — one companion per type (not inlined at every call site)
+2. **Tree-shaking** — unused companions are not bundled
+3. **Explicit imports** — clear dependency graph
+4. **Zero source changes** — no `typia.assert<T>()` calls needed
+
+### Why static analysis for OpenAPI?
+
+1. **Zero runtime cost** — document is generated at build time
+2. **No startup delay** — no `SwaggerModule.createDocument(app, config)` at boot
+3. **CI-friendly** — generate OpenAPI without booting the app
+4. **Type-driven** — constraints from types automatically reflected in schemas
+
+### Why flat OpenAPI schemas?
+
+OpenAPI 3.2 has no generic types. Flat schemas (`PaginatedResponse_UserDto`) work with **all tooling**:
+- Swagger UI
+- Redocly
+- Third-party SDK generators
+- API documentation tools
+
+This is an intentional design decision for maximum compatibility.
+
+## Performance characteristics
+
+**Compilation speed** (realworld fixture, 7 controllers, 41 routes):
+- `tsc`: 559ms (compile only)
+- `tsgonest build`: 128ms (compile + companions + OpenAPI)
+- **4.4x faster** while doing significantly more work
+
+**Large project** (120 controllers, 838 routes):
+- Cold build: ~19s
+- Warm build (cache hit): ~1.1s
+- **17x faster** on warm builds
+
+**Validation performance** (simple DTO):
+- tsgonest: 16.8M ops/s
+- class-validator: 345K ops/s
+- **48x faster**
+
+**Serialization performance** (simple DTO):
+- tsgonest: 13.2M ops/s
+- JSON.stringify: 9.8M ops/s
+- **1.4x faster**
+
+## Repository structure
+
+```text
+Root:
+  cmd/tsgonest/          CLI entry point (main.go, build.go, dev.go)
+  internal/              Core Go packages
+  shim/                  [GENERATED] tsgo API shims
+  patches/               Git patches for typescript-go submodule
+  tools/gen_shims/       Shim code generator
+  testdata/              Test fixtures
+  typescript-go/         [SUBMODULE] Microsoft's TypeScript Go port
+
+Workspace:
+  apps/docs/             Next.js + Fumadocs documentation site
+  packages/core/         tsgonest npm package (Node.js launcher)
+  packages/runtime/      @tsgonest/runtime (defineConfig, errors)
+  packages/types/        @tsgonest/types (branded phantom types)
+  packages/cli-*/        Platform binary packages (darwin, linux, windows)
+  e2e/                   End-to-end tests (Vitest)
+```
+
+## Testing strategy
+
+**Go unit tests** (~580+ tests):
+- Config parsing
+- Type walker (JSDoc, branded types, discriminants, generics)
+- NestJS analyzer
+- Code generation (companions, constraints, formats)
+- OpenAPI schemas and generator
+- Build cache
+
+Run: `go test ./internal/... -count=1`
+
+**E2e tests** (101 tests, Vitest):
+- Full pipeline (compile + companions + OpenAPI)
+- Constraint validation
+- Branded types
+- Diagnostics and exit codes
+- Incremental builds
+- Cache behavior
+- `@Returns()` decorator
+
+Run: `pnpm test:e2e` (requires built binary)
+
+## Common pitfalls
+
+1. **Modifying `typescript-go/` directly** — changes will be lost on submodule update. Use `patches/` instead.
+2. **Editing shim files** — they're generated. Regenerate with `go run tools/gen_shims/main.go`.
+3. **Forgetting `go mod tidy`** — after adding new shim imports.
+4. **Recursive types** — always use visited-type tracking in walkers.
+5. **E2e tests without built binary** — always build first.
+6. **OpenAPI output path** — resolves relative to config file directory, not CWD.
+7. **JS string escaping** — use `jsStringEscape()` when embedding strings in JS literals.
+8. **Boolean representation** — TS `boolean` is `true | false` union, walker coalesces them.
+9. **Companion file naming** — uses `.tsgonest.js`/`.tsgonest.d.ts` suffix.
+10. **Controller classes have no companions** — `@Controller()` classes are skipped.
+
+## Further reading
+
+- [AGENTS.md](https://github.com/tsgonest/tsgonest/blob/main/AGENTS.md) — Developer guide for AI assistants and contributors
+- [typescript-go](https://github.com/microsoft/typescript-go) — Microsoft's Go port of TypeScript
+- [tsgolint](https://github.com/oxc-project/tsgolint) — Established the shim pattern for tsgo
+- [typia](https://github.com/samchon/typia) — Inspiration for type-driven validation
+- [nestia](https://github.com/samchon/nestia) — Inspiration for decorator-free NestJS validation

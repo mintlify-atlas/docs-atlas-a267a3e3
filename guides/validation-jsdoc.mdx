@@ -1,0 +1,571 @@
+---
+title: JSDoc Tag Validation
+description: Master zero-dependency validation using JSDoc comments — from basic constraints to advanced patterns.
+---
+
+JSDoc tags are tsgonest's **zero-dependency** validation approach. Write constraints directly in JSDoc comments with no imports, no packages, and no runtime overhead. tsgonest reads these tags at build time and generates optimized validators.
+
+## Why JSDoc Tags?
+
+<Steps>
+  <Step title="Zero dependencies">
+    No npm packages needed. Write `@format email` in a comment and tsgonest generates the validator.
+  </Step>
+  <Step title="Framework agnostic">
+    Works everywhere TypeScript works — NestJS, Express, Fastify, serverless functions, CLI tools.
+  </Step>
+  <Step title="Editor support">
+    JSDoc comments show up in IntelliSense, hover tooltips, and quick info panels.
+  </Step>
+  <Step title="Identical output">
+    JSDoc and branded types produce the exact same validators. Choose based on preference.
+  </Step>
+</Steps>
+
+## Basic Constraints
+
+### String Validation
+
+```ts title="user.dto.ts"
+interface CreateUserDto {
+  /**
+   * User's email address.
+   * @format email
+   */
+  email: string;
+
+  /**
+   * Display name.
+   * @minLength 1
+   * @maxLength 255
+   */
+  name: string;
+
+  /**
+   * URL-safe username.
+   * @pattern ^[a-z0-9-]+$
+   */
+  username: string;
+}
+```
+
+After running `tsgonest build`, you get:
+
+```js title="dist/user.dto.CreateUserDto.tsgonest.js"
+export function assertCreateUserDto(input) {
+  if (typeof input.email !== 'string') throw new Error('email: expected string');
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.email)) {
+    throw new Error('email: expected string (email)');
+  }
+  if (typeof input.name !== 'string') throw new Error('name: expected string');
+  if (input.name.length < 1) throw new Error('name: length must be >= 1');
+  if (input.name.length > 255) throw new Error('name: length must be <= 255');
+  if (typeof input.username !== 'string') throw new Error('username: expected string');
+  if (!/^[a-z0-9-]+$/.test(input.username)) {
+    throw new Error('username: must match pattern ^[a-z0-9-]+$');
+  }
+  return input;
+}
+```
+
+### Numeric Validation
+
+```ts title="product.dto.ts"
+interface CreateProductDto {
+  /**
+   * Product price in USD.
+   * @minimum 0
+   * @multipleOf 0.01
+   */
+  price: number;
+
+  /**
+   * User rating (1-5 stars).
+   * @minimum 1
+   * @maximum 5
+   * @type int32
+   */
+  rating: number;
+
+  /**
+   * Discount percentage (0-100, exclusive).
+   * @exclusiveMinimum 0
+   * @exclusiveMaximum 100
+   */
+  discount: number;
+}
+```
+
+Each numeric tag maps to a specific check:
+
+- `@minimum N` → `value >= N`
+- `@maximum N` → `value <= N`
+- `@exclusiveMinimum N` → `value > N`
+- `@exclusiveMaximum N` → `value < N`
+- `@multipleOf N` → `value % N === 0`
+- `@type int32` → ensures integer in 32-bit range
+
+### Array Validation
+
+```ts title="post.dto.ts"
+interface CreatePostDto {
+  /**
+   * Post title.
+   * @minLength 5
+   * @maxLength 200
+   */
+  title: string;
+
+  /**
+   * Content tags.
+   * @minItems 1
+   * @maxItems 10
+   * @uniqueItems
+   */
+  tags: string[];
+
+  /**
+   * Allowed actions.
+   * @minItems 1
+   */
+  actions: ('view' | 'edit' | 'delete')[];
+}
+```
+
+Array constraints apply to the collection:
+
+- `@minItems N` — minimum array length
+- `@maxItems N` — maximum array length
+- `@uniqueItems` — no duplicate elements
+
+## Transforms
+
+Transforms run **before** validation and never fail. They modify the input value.
+
+```ts title="contact.dto.ts"
+interface ContactDto {
+  /**
+   * Contact email (trimmed and validated).
+   * @transform trim
+   * @format email
+   */
+  email: string;
+
+  /**
+   * ISO 3166-1 alpha-2 country code.
+   * @transform toUpperCase
+   * @pattern ^[A-Z]{2}$
+   */
+  countryCode: string;
+
+  /**
+   * Search query (lowercased for case-insensitive search).
+   * @transform toLowerCase
+   */
+  query: string;
+}
+```
+
+<Accordion title="Available transforms">
+  | Transform | Effect |
+  |---|---|
+  | `@transform trim` | `value.trim()` |
+  | `@transform toLowerCase` | `value.toLowerCase()` |
+  | `@transform toUpperCase` | `value.toUpperCase()` |
+</Accordion>
+
+Transforms compose with validation:
+
+```ts
+/**
+ * Email is trimmed BEFORE the @format email check.
+ * Input: "  user@example.com  " → trimmed to "user@example.com" → validated
+ */
+email: string; // @transform trim @format email
+```
+
+## Default Values
+
+Use `@default` for optional properties. The value is parsed as JSON.
+
+```ts title="pagination.dto.ts"
+interface PaginationDto {
+  /**
+   * Current page number.
+   * @default 1
+   * @minimum 1
+   */
+  page?: number;
+
+  /**
+   * Items per page.
+   * @default 20
+   * @minimum 1
+   * @maximum 100
+   */
+  limit?: number;
+
+  /**
+   * Sort order.
+   * @default "createdAt"
+   */
+  sortBy?: string;
+
+  /**
+   * Include deleted items.
+   * @default false
+   */
+  includeDeleted?: boolean;
+}
+```
+
+<Warning>
+  String defaults require quotes in the JSDoc tag:
+  ```ts
+  // ✅ Correct
+  /** @default "light" */
+  theme?: string;
+
+  // ❌ Wrong — parsed as identifier, not string
+  /** @default light */
+  theme?: string;
+  ```
+</Warning>
+
+## Coercion for Query Parameters
+
+Query params arrive as strings. Use `@coerce` to convert them to the declared type.
+
+```ts title="filter.dto.ts"
+interface FilterDto {
+  /**
+   * Page number (coerced from string).
+   * @coerce
+   * @minimum 1
+   */
+  page: number;
+
+  /**
+   * Items per page.
+   * @coerce
+   * @minimum 1
+   * @maximum 100
+   */
+  limit: number;
+
+  /**
+   * Show active items only.
+   * @coerce
+   */
+  active: boolean;
+}
+```
+
+With `@coerce`, inputs are converted:
+
+- `"42"` → `42`
+- `"true"` → `true`
+- `"false"` → `false`
+
+In NestJS controllers:
+
+```ts
+@Get()
+findAll(@Query() query: FilterDto): ProductDto[] {
+  // query.page is a number, not a string
+  // query.active is a boolean, not a string
+}
+```
+
+## Format Reference
+
+The `@format` tag validates against well-known patterns.
+
+<Tabs>
+  <Tab title="Email & URLs">
+    ```ts
+    interface ContactDto {
+      /** @format email */
+      email: string;
+
+      /** @format idn-email */
+      internationalEmail: string;
+
+      /** @format url */
+      website: string;
+
+      /** @format uri */
+      resourceId: string;
+    }
+    ```
+  </Tab>
+  <Tab title="Identifiers">
+    ```ts
+    interface EntityDto {
+      /** @format uuid */
+      id: string;
+
+      /** @format nanoid */
+      shortId: string;
+
+      /** @format cuid */
+      legacyId: string;
+
+      /** @format ulid */
+      sortableId: string;
+
+      /** @format jwt */
+      token: string;
+    }
+    ```
+  </Tab>
+  <Tab title="Network">
+    ```ts
+    interface NetworkDto {
+      /** @format ipv4 */
+      ipv4Address: string;
+
+      /** @format ipv6 */
+      ipv6Address: string;
+
+      /** @format hostname */
+      host: string;
+
+      /** @format mac */
+      macAddress: string;
+
+      /** @format cidrv4 */
+      subnet: string;
+    }
+    ```
+  </Tab>
+  <Tab title="Date & Time">
+    ```ts
+    interface EventDto {
+      /** @format date-time */
+      timestamp: string; // ISO 8601: 2026-03-03T14:30:00Z
+
+      /** @format date */
+      eventDate: string; // 2026-03-03
+
+      /** @format time */
+      eventTime: string; // 14:30:00
+
+      /** @format duration */
+      length: string; // P3DT4H (3 days, 4 hours)
+    }
+    ```
+  </Tab>
+  <Tab title="Encoding">
+    ```ts
+    interface EncodedDto {
+      /** @format byte */
+      base64Data: string;
+
+      /** @format base64url */
+      urlSafeData: string;
+
+      /** @format hex */
+      hexData: string;
+
+      /** @format json-pointer */
+      path: string; // /foo/bar/0
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Complete Real-World Example
+
+Here's a comprehensive DTO using many tags together:
+
+```ts title="create-order.dto.ts"
+/** Order line item */
+interface OrderItem {
+  /**
+   * Product UUID.
+   * @format uuid
+   */
+  productId: string;
+
+  /**
+   * Quantity ordered.
+   * @type int32
+   * @minimum 1
+   * @maximum 1000
+   */
+  quantity: number;
+
+  /**
+   * Unit price in USD.
+   * @minimum 0
+   * @multipleOf 0.01
+   */
+  unitPrice: number;
+}
+
+/** Create order request */
+interface CreateOrderDto {
+  /**
+   * Customer email (trimmed and validated).
+   * @transform trim
+   * @format email
+   */
+  customerEmail: string;
+
+  /**
+   * Shipping address line.
+   * @minLength 1
+   * @maxLength 500
+   */
+  shippingAddress: string;
+
+  /**
+   * Order items.
+   * @minItems 1
+   * @maxItems 100
+   */
+  items: OrderItem[];
+
+  /**
+   * Promo code (uppercase, alphanumeric + hyphens).
+   * @transform toUpperCase
+   * @pattern ^[A-Z0-9-]+$
+   */
+  promoCode?: string;
+
+  /**
+   * Gift message.
+   * @maxLength 500
+   */
+  giftMessage?: string;
+
+  /**
+   * Express shipping.
+   * @default false
+   */
+  expressShipping?: boolean;
+
+  /**
+   * Scheduled delivery date.
+   * @format date
+   */
+  deliveryDate?: string;
+}
+```
+
+Running `tsgonest build` produces a companion file with:
+
+- Full recursive validation (order → items)
+- String trimming and uppercasing transforms
+- Email, UUID, date format checks
+- Numeric range and precision validation
+- Array length constraints
+- Default value injection
+- Type coercion where needed
+
+All from JSDoc comments. Zero runtime dependencies.
+
+## Combining with NestJS
+
+In NestJS controllers, validation is **injected at compile time**:
+
+```ts title="orders.controller.ts"
+import { Controller, Post, Body } from '@nestjs/common';
+import type { CreateOrderDto } from './create-order.dto';
+
+@Controller('orders')
+export class OrdersController {
+  @Post()
+  create(@Body() body: CreateOrderDto) {
+    // body is fully validated before this line runs
+    // transforms applied, defaults set, formats checked
+    return this.ordersService.create(body);
+  }
+}
+```
+
+After `tsgonest build`, the compiled controller looks like:
+
+```js title="dist/orders.controller.js"
+import { assertCreateOrderDto } from './create-order.dto.CreateOrderDto.tsgonest.js';
+
+class OrdersController {
+  create(body) {
+    body = assertCreateOrderDto(body); // ← injected by tsgonest
+    return this.ordersService.create(body);
+  }
+}
+```
+
+No pipes, no interceptors, no decorators. Just compile-time code injection.
+
+## Tips & Tricks
+
+<Accordion title="Use multiline JSDoc for readability">
+  ```ts
+  interface UserDto {
+    /**
+     * User's email address for notifications.
+     * Must be unique across all accounts.
+     * @format email
+     * @transform trim
+     */
+    email: string;
+  }
+  ```
+
+  The description (first paragraph) and tags are both extracted. Tags can be on separate lines.
+</Accordion>
+
+<Accordion title="Combine constraints for precision">
+  ```ts
+  /**
+   * Price in USD cents.
+   * @type int32
+   * @minimum 0
+   * @maximum 100000000
+   */
+  priceInCents: number;
+  ```
+
+  `@type int32` ensures integer, while `@minimum` and `@maximum` define the range.
+</Accordion>
+
+<Accordion title="Order matters for transforms">
+  ```ts
+  /**
+   * @transform trim
+   * @transform toLowerCase
+   * @format email
+   */
+  email: string;
+  ```
+
+  Applied in order: trim → toLowerCase → email validation.
+</Accordion>
+
+<Accordion title="Prefer @transform over manual normalization">
+  ```ts
+  // ❌ Manual normalization in controller
+  @Post()
+  create(@Body() body: CreateUserDto) {
+    body.email = body.email.trim().toLowerCase();
+  }
+
+  // ✅ Declarative transform in DTO
+  /**
+   * @transform trim
+   * @transform toLowerCase
+   */
+  email: string;
+  ```
+
+  Transforms are applied during validation, before your handler runs.
+</Accordion>
+
+## Next Steps
+
+- [Branded Type Validation](/guides/validation-branded-types) — Type-safe validation with `@tsgonest/types`
+- [Array Validation](/guides/validation-arrays) — Deep dive into array constraints
+- [Custom Validators](/guides/validation-custom) — Write custom validation functions

@@ -1,0 +1,503 @@
+---
+title: 'Configuration Options'
+description: 'Complete reference for all tsgonest configuration options'
+---
+
+## Controllers
+
+Defines which controller files to analyze for OpenAPI generation.
+
+<ParamField path="controllers.include" type="string[]" required>
+  Glob patterns for controller files to include.
+  
+  ```typescript
+  controllers: {
+    include: ["src/**/*.controller.ts"],
+  }
+  ```
+  
+  At least one pattern is required.
+</ParamField>
+
+<ParamField path="controllers.exclude" type="string[]">
+  Glob patterns for files to exclude from analysis.
+  
+  ```typescript
+  controllers: {
+    include: ["src/**/*.controller.ts"],
+    exclude: ["src/**/*.spec.ts", "src/**/test/**"],
+  }
+  ```
+</ParamField>
+
+## Transforms
+
+Controls which code transformations to apply during compilation.
+
+<ParamField path="transforms.validation" type="boolean" default="true">
+  Generate validation companion files (`.tsgonest.js`) with `validate` and `assert` functions.
+  
+  ```typescript
+  transforms: {
+    validation: true,
+  }
+  ```
+  
+  When enabled, tsgonest generates validation functions for all types and automatically injects them into `@Body()`, `@Query()`, `@Param()`, and `@Headers()` parameters.
+</ParamField>
+
+<ParamField path="transforms.serialization" type="boolean" default="true">
+  Generate serialization companion files with fast JSON `serialize` functions.
+  
+  ```typescript
+  transforms: {
+    serialization: true,
+  }
+  ```
+  
+  Serialization is automatically applied to controller return values based on the `responseSerializer` setting.
+</ParamField>
+
+<ParamField path="transforms.standardSchema" type="boolean" default="false">
+  Generate Standard Schema v1 wrappers for 60+ framework interop.
+  
+  ```typescript
+  transforms: {
+    standardSchema: true,
+  }
+  ```
+  
+  Enables integration with libraries that support the [Standard Schema](https://standardschema.dev/) specification.
+</ParamField>
+
+<ParamField path="transforms.responseSerializer" type="'guard' | 'safe' | 'none'" default="guard">
+  Controls the level of runtime type checking applied to controller return values before serialization.
+  
+  ```typescript
+  transforms: {
+    responseSerializer: "guard", // "safe" | "none"
+  }
+  ```
+  
+  <AccordionGroup>
+    <Accordion title="guard (default)" icon="shield-check">
+      Runs a lightweight `is<Type>()` boolean check before calling `serialize<Type>()`. Throws a `TypeError` on mismatch.
+      
+      Near-zero overhead on the happy path (no error object allocation).
+    </Accordion>
+    
+    <Accordion title="safe" icon="circle-check">
+      Runs the full `validate<Type>()` check, which collects every validation error into an array. Throws a `TypeError` with a `.errors` property containing detailed diagnostics.
+      
+      Useful during development or when you need precise error reporting.
+    </Accordion>
+    
+    <Accordion title="none" icon="ban">
+      Skips all runtime checks and calls `serialize<Type>()` directly.
+      
+      Maximum performance, but if the return value doesn't match the declared type the serialized JSON may be malformed.
+    </Accordion>
+  </AccordionGroup>
+</ParamField>
+
+<ParamField path="transforms.include" type="string[]">
+  Glob patterns for source files to generate companion files for.
+  
+  ```typescript
+  transforms: {
+    include: ["src/**/*.dto.ts", "src/**/*.entity.ts"],
+  }
+  ```
+  
+  By default, tsgonest generates companions for all types referenced by controllers.
+</ParamField>
+
+<ParamField path="transforms.exclude" type="string[]">
+  Type name patterns to exclude from code generation.
+  
+  ```typescript
+  transforms: {
+    exclude: ["Legacy*", "Internal*", "*Deprecated"],
+  }
+  ```
+  
+  Useful for excluding legacy or internal types from companion generation.
+</ParamField>
+
+## OpenAPI
+
+OpenAPI document generation settings.
+
+<ParamField path="openapi.output" type="string" default="dist/openapi.json">
+  Output path for the generated OpenAPI document.
+  
+  ```typescript
+  openapi: {
+    output: "dist/openapi.json",
+  }
+  ```
+  
+  Set to empty string `""` to disable OpenAPI generation.
+  
+  <Note>
+    The path is resolved relative to the config file directory, not the current working directory.
+  </Note>
+</ParamField>
+
+<ParamField path="openapi.title" type="string">
+  API title for the OpenAPI info section.
+  
+  ```typescript
+  openapi: {
+    title: "My API",
+  }
+  ```
+</ParamField>
+
+<ParamField path="openapi.version" type="string">
+  API version for the OpenAPI info section.
+  
+  ```typescript
+  openapi: {
+    version: "1.0.0",
+  }
+  ```
+</ParamField>
+
+<ParamField path="openapi.description" type="string">
+  API description for the OpenAPI info section.
+  
+  ```typescript
+  openapi: {
+    description: "A comprehensive API for managing resources",
+  }
+  ```
+</ParamField>
+
+<ParamField path="openapi.termsOfService" type="string">
+  URL to the API terms of service.
+  
+  ```typescript
+  openapi: {
+    termsOfService: "https://example.com/terms",
+  }
+  ```
+</ParamField>
+
+<ParamField path="openapi.contact" type="object">
+  Contact information for the API.
+  
+  ```typescript
+  openapi: {
+    contact: {
+      name: "API Support",
+      url: "https://example.com/support",
+      email: "support@example.com",
+    },
+  }
+  ```
+</ParamField>
+
+<ParamField path="openapi.license" type="object">
+  License information for the API.
+  
+  ```typescript
+  openapi: {
+    license: {
+      name: "MIT",
+      url: "https://opensource.org/licenses/MIT",
+    },
+  }
+  ```
+</ParamField>
+
+<ParamField path="openapi.servers" type="array">
+  Server list for the OpenAPI document.
+  
+  ```typescript
+  openapi: {
+    servers: [
+      {
+        url: "https://api.example.com",
+        description: "Production server",
+      },
+      {
+        url: "https://staging-api.example.com",
+        description: "Staging server",
+      },
+    ],
+  }
+  ```
+</ParamField>
+
+<ParamField path="openapi.securitySchemes" type="object">
+  Named security schemes for the OpenAPI document.
+  
+  ```typescript
+  openapi: {
+    securitySchemes: {
+      bearer: {
+        type: "http",
+        scheme: "bearer",
+        bearerFormat: "JWT",
+        description: "JWT bearer token",
+      },
+      apiKey: {
+        type: "apiKey",
+        in: "header",
+        name: "X-API-Key",
+        description: "API key authentication",
+      },
+    },
+  }
+  ```
+</ParamField>
+
+<ParamField path="openapi.security" type="array">
+  Global security requirements applied to all operations.
+  
+  ```typescript
+  openapi: {
+    security: [
+      { bearer: [] },
+    ],
+  }
+  ```
+  
+  Routes can opt out using the `@public` JSDoc tag:
+  
+  ```typescript
+  /**
+   * @public
+   */
+  @Get('health')
+  health() {
+    return { status: 'ok' };
+  }
+  ```
+</ParamField>
+
+<ParamField path="openapi.tags" type="array">
+  Tag descriptions for the OpenAPI document.
+  
+  ```typescript
+  openapi: {
+    tags: [
+      {
+        name: "users",
+        description: "User management endpoints",
+      },
+      {
+        name: "posts",
+        description: "Post management endpoints",
+      },
+    ],
+  }
+  ```
+  
+  Tags referenced by controllers are auto-collected; this allows adding descriptions.
+</ParamField>
+
+## NestJS
+
+NestJS-specific settings like global prefix and versioning.
+
+<ParamField path="nestjs.globalPrefix" type="string">
+  Global route prefix applied to all controllers.
+  
+  ```typescript
+  nestjs: {
+    globalPrefix: "api",
+  }
+  ```
+  
+  Matches the behavior of `app.setGlobalPrefix('api')` in your NestJS bootstrap.
+</ParamField>
+
+<ParamField path="nestjs.versioning" type="object">
+  API versioning settings.
+  
+  ```typescript
+  nestjs: {
+    versioning: {
+      type: "URI",
+      defaultVersion: "1",
+      prefix: "v",
+    },
+  }
+  ```
+  
+  <ParamField path="nestjs.versioning.type" type="string" default="URI">
+    Versioning strategy: `"URI"`, `"HEADER"`, `"MEDIA_TYPE"`, or `"CUSTOM"`.
+  </ParamField>
+  
+  <ParamField path="nestjs.versioning.defaultVersion" type="string">
+    Default version (e.g., `"1"`).
+  </ParamField>
+  
+  <ParamField path="nestjs.versioning.prefix" type="string" default="v">
+    URI version prefix (default `"v"` results in `/v1/users`).
+  </ParamField>
+</ParamField>
+
+## SDK
+
+TypeScript SDK generation settings.
+
+<ParamField path="sdk.output" type="string" default="./sdk">
+  Output directory for the generated TypeScript SDK.
+  
+  ```typescript
+  sdk: {
+    output: "./client",
+  }
+  ```
+</ParamField>
+
+<ParamField path="sdk.input" type="string">
+  Path to OpenAPI JSON input file.
+  
+  ```typescript
+  sdk: {
+    input: "dist/openapi.json",
+  }
+  ```
+  
+  Defaults to `openapi.output` if not specified.
+</ParamField>
+
+## Dev/Build Settings
+
+These settings mirror `nest-cli.json` conventions for compatibility with existing NestJS projects.
+
+<ParamField path="entryFile" type="string" default="main">
+  Entry point name without extension.
+  
+  ```typescript
+  {
+    entryFile: "index",
+  }
+  ```
+  
+  tsgonest will look for `src/index.ts` as the entry point.
+</ParamField>
+
+<ParamField path="sourceRoot" type="string" default="src">
+  Source root directory.
+  
+  ```typescript
+  {
+    sourceRoot: "src",
+  }
+  ```
+</ParamField>
+
+<ParamField path="deleteOutDir" type="boolean" default="false">
+  Delete output directory before build (like `--clean`).
+  
+  ```typescript
+  {
+    deleteOutDir: true,
+  }
+  ```
+</ParamField>
+
+<ParamField path="manualRestart" type="boolean" default="false">
+  Enable "rs" manual restart in dev mode.
+  
+  ```typescript
+  {
+    manualRestart: true,
+  }
+  ```
+  
+  When enabled, type `rs` in the terminal to manually restart the dev server.
+</ParamField>
+
+## Example Configuration
+
+Here's a complete example with all major options:
+
+```typescript tsgonest.config.ts
+import { defineConfig } from "@tsgonest/runtime";
+
+export default defineConfig({
+  // Controller discovery
+  controllers: {
+    include: ["src/**/*.controller.ts"],
+    exclude: ["src/**/*.spec.ts"],
+  },
+
+  // Code generation
+  transforms: {
+    validation: true,
+    serialization: true,
+    standardSchema: false,
+    responseSerializer: "guard",
+  },
+
+  // OpenAPI generation
+  openapi: {
+    output: "dist/openapi.json",
+    title: "My API",
+    version: "1.0.0",
+    description: "A comprehensive API",
+    contact: {
+      name: "API Support",
+      email: "support@example.com",
+    },
+    license: {
+      name: "MIT",
+    },
+    servers: [
+      {
+        url: "https://api.example.com",
+        description: "Production",
+      },
+    ],
+    securitySchemes: {
+      bearer: {
+        type: "http",
+        scheme: "bearer",
+        bearerFormat: "JWT",
+      },
+    },
+    security: [
+      { bearer: [] },
+    ],
+  },
+
+  // NestJS settings
+  nestjs: {
+    globalPrefix: "api",
+    versioning: {
+      type: "URI",
+      defaultVersion: "1",
+      prefix: "v",
+    },
+  },
+
+  // SDK generation
+  sdk: {
+    output: "./client",
+  },
+
+  // Dev/build settings
+  entryFile: "main",
+  sourceRoot: "src",
+  deleteOutDir: false,
+  manualRestart: false,
+});
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="CLI Commands" icon="terminal" href="/cli/overview">
+    Learn about CLI commands and flags
+  </Card>
+  
+  <Card title="Validation Guide" icon="shield-check" href="/guides/validation-jsdoc">
+    Set up validation with JSDoc tags or branded types
+  </Card>
+</CardGroup>

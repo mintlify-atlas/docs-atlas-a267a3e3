@@ -1,0 +1,243 @@
+---
+title: '@tsgonest/types Package'
+description: 'Zero-runtime branded types for type-safe validation constraints'
+---
+
+## Overview
+
+The `@tsgonest/types` package provides phantom branded types that enable compile-time validation constraints with full type safety and IDE autocomplete. These types produce **no runtime code** — they exist purely for static analysis.
+
+tsgonest's compiler reads phantom properties (`__tsgonest_*`) to generate validators, allowing you to write type-safe validation without runtime dependencies.
+
+## Installation
+
+```bash
+pnpm add -D @tsgonest/types
+```
+
+## Import
+
+```typescript
+import { tags } from '@tsgonest/types';
+```
+
+All validation tags are exported under the `tags` namespace.
+
+## Basic Usage
+
+```typescript
+import { tags } from '@tsgonest/types';
+
+interface CreateUserDto {
+  email: string & tags.Email;
+  name: string & tags.MinLength<1> & tags.MaxLength<255>;
+  age: number & tags.Min<0> & tags.Max<150>;
+  tags: string[] & tags.MinItems<1> & tags.UniqueItems;
+}
+```
+
+## Tag Categories
+
+### String Tags
+
+Validation constraints for string types:
+
+- **Format validation**: `Email`, `Uuid`, `Url`, `IPv4`, `DateTime`, etc.
+- **Length constraints**: `MinLength`, `MaxLength`, `Length`
+- **Pattern matching**: `Pattern`, `StartsWith`, `EndsWith`, `Includes`
+- **Case validation**: `Uppercase`, `Lowercase`
+- **Transforms**: `Trim`, `ToUpperCase`, `ToLowerCase`
+
+[View all string tags →](/api/types/string-tags)
+
+### Numeric Tags
+
+Validation constraints for number types:
+
+- **Range constraints**: `Min`/`Minimum`, `Max`/`Maximum`, `Range`
+- **Exclusive bounds**: `Gt`/`ExclusiveMinimum`, `Lt`/`ExclusiveMaximum`
+- **Type constraints**: `Int`, `Uint`, `SafeInt`, `Float`, `Double`
+- **Value constraints**: `MultipleOf`/`Step`, `Positive`, `Negative`
+
+[View all numeric tags →](/api/types/numeric-tags)
+
+### Array Tags
+
+Validation constraints for array types:
+
+- **Size constraints**: `MinItems`, `MaxItems`
+- **Uniqueness**: `UniqueItems`/`Unique`
+
+[View all array tags →](/api/types/array-tags)
+
+## Custom Error Messages
+
+Every constraint supports two forms:
+
+```typescript
+interface Example {
+  // Simple form (uses default error message)
+  age: number & tags.Min<0>;
+  
+  // Extended form (custom error message)
+  age: number & tags.Min<{ value: 0; error: 'Age must be positive' }>;
+}
+```
+
+### Global vs Per-Constraint Errors
+
+```typescript
+import { tags } from '@tsgonest/types';
+
+interface StrictDto {
+  // Global error for all constraints on this field
+  email: string & tags.Email & tags.Error<'Invalid email address'>;
+  
+  // Per-constraint errors (take precedence over global)
+  age:
+    | number
+    & tags.Min<{ value: 0; error: 'Age cannot be negative' }>
+    & tags.Max<{ value: 150; error: 'Age cannot exceed 150' }>;
+}
+```
+
+## Combining Tags
+
+Tags can be combined using intersection types:
+
+```typescript
+import { tags } from '@tsgonest/types';
+
+interface Product {
+  // Multiple string constraints
+  name: string & tags.MinLength<1> & tags.MaxLength<100> & tags.Trim;
+  
+  // Equivalent using compound constraint
+  name: string & tags.Between<{ min: 1; max: 100 }> & tags.Trim;
+  
+  // Multiple numeric constraints
+  price: number & tags.Min<0> & tags.MultipleOf<0.01>;
+  
+  // Array with item and size constraints
+  tags: (string & tags.MinLength<1>)[] & tags.MinItems<1> & tags.UniqueItems;
+}
+```
+
+## Coercion
+
+For `@Query()` and `@Param()` parameters, use `Coerce` to automatically convert strings:
+
+```typescript
+import { tags } from '@tsgonest/types';
+
+interface QueryDto {
+  page: number & tags.Coerce & tags.Min<1>;      // "123" → 123
+  active: boolean & tags.Coerce;                 // "true" → true
+  limit: number & tags.Coerce & tags.Max<100>;   // "50" → 50
+}
+```
+
+## Default Values
+
+Optional properties can have default values:
+
+```typescript
+import { tags } from '@tsgonest/types';
+
+interface ConfigDto {
+  theme?: string & tags.Default<'light'>;
+  limit?: number & tags.Default<10> & tags.Min<1> & tags.Max<100>;
+}
+```
+
+## Custom Validators
+
+Reference custom predicate functions:
+
+```typescript
+import { tags } from '@tsgonest/types';
+import { isValidCard } from './validators/credit-card';
+
+interface PaymentDto {
+  // Simple form
+  card: string & tags.Validate<typeof isValidCard>;
+  
+  // With custom error
+  card: string & tags.Validate<{
+    fn: typeof isValidCard;
+    error: 'Invalid credit card number';
+  }>;
+}
+```
+
+The validator function must be a predicate:
+
+```typescript validators/credit-card.ts
+export function isValidCard(value: string): boolean {
+  // Luhn algorithm implementation
+  return luhnCheck(value);
+}
+```
+
+## Type-Only Nature
+
+Branded types compile to nothing:
+
+```typescript
+import { tags } from '@tsgonest/types';
+
+type Email = string & tags.Email;
+
+// Compiles to:
+type Email = string;
+
+// No runtime code is emitted
+```
+
+tsgonest reads the phantom properties during compilation to generate validators in `.tsgonest.js` companion files.
+
+## Compatibility with typia
+
+tsgonest also recognizes typia's `"typia.tag"` phantom properties for migration compatibility:
+
+```typescript
+// Both work identically
+type A = string & tags.Email;
+type B = string & { "typia.tag": "email" };
+```
+
+This allows gradual migration from typia to tsgonest.
+
+## Phantom Property Structure
+
+All phantom properties:
+- Are prefixed with `__tsgonest_` (e.g., `__tsgonest_minimum`, `__tsgonest_format`)
+- Are optional (`?`) so branded types remain assignable from base types
+- Are `readonly` for safety
+
+Example:
+
+```typescript
+// User-facing API
+export type Min<N> = { readonly __tsgonest_minimum?: N };
+
+// Usage
+type Age = number & Min<0>;  // Age is assignable from number
+```
+
+## Zero-Runtime Guarantee
+
+Importing from `@tsgonest/types` adds **zero bytes** to your bundle:
+
+```bash
+pnpm add -D @tsgonest/types  # Dev dependency
+```
+
+All validation code is generated at compile time by tsgonest.
+
+## See Also
+
+- [String Tags Reference →](/api/types/string-tags)
+- [Numeric Tags Reference →](/api/types/numeric-tags)
+- [Array Tags Reference →](/api/types/array-tags)
+- [Validation with Branded Types Guide →](/guides/validation-branded-types)

@@ -1,0 +1,365 @@
+---
+title: Compilation Pipeline
+description: How tsgonest wraps typescript-go for native-speed TypeScript compilation
+---
+
+## Overview
+
+tsgonest's compilation engine wraps [typescript-go](https://github.com/microsoft/typescript-go), Microsoft's Go port of the TypeScript compiler. This gives tsgonest **native-speed compilation** while maintaining full compatibility with standard `tsconfig.json` configuration.
+
+Unlike pure TypeScript solutions that run in Node.js, tsgonest compiles TypeScript **without a JavaScript runtime**, resulting in faster startup times and lower memory overhead.
+
+## Why typescript-go?
+
+### Native Performance
+
+- **Single binary**: No Node.js required — tsgonest is a standalone executable
+- **Fast startup**: Go binaries launch in milliseconds vs. Node.js bootstrap overhead
+- **Efficient memory**: Go's garbage collector outperforms V8 on long-running processes
+- **Parallelization**: Multi-threaded compilation across source files
+
+### Full TypeScript Compatibility
+
+typescript-go is a **line-by-line port** of Microsoft's TypeScript compiler:
+
+- Identical parsing, type checking, and emit behavior
+- Supports all `tsconfig.json` options (target, module, paths, etc.)
+- Handles comments, JSDoc, decorators, and TypeScript syntax extensions
+- Outputs identical `.js` and `.d.ts` files to `tsc`
+
+## Architecture
+
+### The Shim Layer
+
+tsgonest accesses typescript-go's internal APIs through a **shim layer** — the same pattern used by [tsgolint](https://github.com/microsoft/typescript-go/tree/main/tsgolint):
+
+```go
+// internal/compiler/program.go:89
+program.BindSourceFiles()
+```
+
+**How shims work:**
+
+1. **`go:linkname` directives** reach into unexported functions
+2. **`unsafe.Pointer`** field accessors expose internal struct fields
+3. **Automatic generation** via `tools/gen_shims/` from `extra-shim.json` configs
+4. **Version-tracked** via git submodule + patches in `patches/`
+
+<Note>
+  The `shim/` directory contains **generated code** — never edit these files manually. Regenerate with `just shim` after modifying `shim/*/extra-shim.json`.
+</Note>
+
+### Compilation Pipeline
+
+The compilation flow follows these stages:
+
+<Steps>
+  <Step title="Parse tsconfig.json">
+    tsgonest uses typescript-go's native JSONC parser to read `tsconfig.json`, handling comments, trailing commas, and `extends` chains automatically.
+
+    ```go
+    // internal/compiler/program.go:42
+    func ParseTSConfig(fs vfs.FS, cwd string, tsconfigPath string, 
+                       host shimcompiler.CompilerHost, 
+                       cliOverrides *core.CompilerOptions) (*tsoptions.ParsedCommandLine, []Diagnostic, error)
+    ```
+  </Step>
+
+  <Step title="Create TypeScript Program">
+    A `Program` object wraps all source files, the type checker, and emit logic. tsgonest supports both:
+
+    - **Non-incremental mode** (`tsgonest build`) — full compilation every time
+    - **Incremental mode** (`tsgonest dev`) — only recompiles changed files using `.tsbuildinfo`
+
+    ```go
+    // internal/compiler/program.go:92
+    program := shimcompiler.NewProgram(opts)
+    program.BindSourceFiles()
+    ```
+  </Step>
+
+  <Step title="Type Check">
+    tsgonest invokes typescript-go's diagnostic cascade — the same sequence `tsc` uses:
+
+    - **Syntactic** → parse errors
+    - **Program** → config errors
+    - **Bind** → symbol resolution errors
+    - **Semantic** → type errors
+    - **Declaration** → `.d.ts` emit errors
+
+    ```go
+    // internal/compiler/program.go:151
+    diags := shimcompiler.GetDiagnosticsOfAnyProgram(ctx, program, ...)
+    ```
+
+    **By default, type errors are fatal** (exit code 1). Use `--noCheck` to skip type checking for faster feedback during development.
+  </Step>
+
+  <Step title="Emit JavaScript">
+    typescript-go's emitter generates `.js` and `.d.ts` files using the same codegen as `tsc`.
+
+    ```go
+    // internal/compiler/program.go:129
+    result := program.Emit(context.Background(), opts)
+    ```
+
+    **Output is identical to `tsc`** — same source maps, same module resolution, same path alias rewriting.
+  </Step>
+</Steps>
+
+## Incremental Compilation
+
+In watch mode (`tsgonest dev`), the compiler uses **incremental state tracking** to avoid redundant work:
+
+### `.tsbuildinfo` Cache
+
+The `.tsbuildinfo` file (controlled by `tsconfig.json` → `incremental: true`) stores:
+
+- **File hashes** — detect which source files changed
+- **Type cache** — reuse type information for unchanged files
+- **Emit state** — skip `.js` generation for unchanged files
+
+```go
+// internal/compiler/program.go:183
+incrProgram := shimincremental.NewProgram(program, oldProgram, incrHost, false)
+```
+
+### Post-Processing Cache
+
+Beyond typescript-go's incremental compilation, tsgonest maintains a **separate cache** for expensive post-processing:
+
+- **Controller analysis** (OpenAPI generation)
+- **Companion file generation** (validators/serializers)
+- **Type metadata extraction**
+
+This cache lives at `<outDir>/.tsgonest-cache` and is invalidated when:
+
+- Any source file changes
+- `tsgonest.config.ts` is modified
+- The tsgonest binary is upgraded
+
+```go
+// internal/buildcache/cache.go:30
+type Cache struct {
+    V          int      // schema version
+    ConfigHash string   // SHA-256 of config file
+    Outputs    []string // paths that must exist
+}
+```
+
+<Tip>
+  **Fast rebuilds**: When typescript-go detects zero file changes and the post-processing cache is valid, `tsgonest build` completes in milliseconds without re-analyzing types or regenerating companions.
+</Tip>
+
+## Path Alias Resolution
+
+tsgonest **automatically resolves TypeScript path aliases** in emitted `.js` files — something `tsc` doesn't do.
+
+### Example
+
+**`tsconfig.json`:**
+```json
+{
+  "compilerOptions": {
+    "paths": {
+      "@/dto/*": ["./src/dto/*"],
+      "@shared/*": ["./src/shared/*"]
+    }
+  }
+}
+```
+
+**Input** (`src/users/user.service.ts`):
+```typescript
+import { CreateUserDto } from '@/dto/user.dto';
+import { logger } from '@shared/logger';
+```
+
+**Output** (`dist/users/user.service.js`):
+```javascript
+import { CreateUserDto } from '../dto/user.dto.js';
+import { logger } from '../shared/logger.js';
+```
+
+### Algorithm
+
+tsgonest's path alias resolution follows the **esbuild algorithm**:
+
+1. **Exact match first** — `@/dto/user.dto` matches `@/dto/*` pattern
+2. **Longest-prefix wildcard** — `@shared/utils/helpers` matches `@shared/*`
+3. **Relative path rewriting** — compute relative path from consumer to target
+4. **`.js` extension appending** — required for ES modules
+
+```go
+// internal/pathalias/pathalias.go
+func Resolve(importPath string, mappings map[string][]string, ...) string
+```
+
+## Source Maps
+
+tsgonest preserves TypeScript source maps for debugging:
+
+```json
+// tsconfig.json
+{
+  "compilerOptions": {
+    "sourceMap": true,
+    "inlineSourceMap": false,
+    "inlineSources": false
+  }
+}
+```
+
+- **Inline vs. external**: Controlled by `inlineSourceMap`
+- **Full source embedding**: Use `inlineSources` to embed original `.ts` in map
+- **Debug support**: Node.js, Chrome DevTools, and VS Code read `.js.map` files
+
+## Diagnostics
+
+### Error Reporting
+
+tsgonest formats TypeScript diagnostics with file paths and line numbers:
+
+```bash
+src/user.dto.ts:12:15 - error TS2322: Type 'string' is not assignable to type 'number'.
+```
+
+Diagnostics are collected from all files and printed to stderr. **Exit code 1 signals compilation failure**.
+
+### `--noCheck` Mode
+
+Skip type checking for faster iteration:
+
+```bash
+tsgonest build --noCheck
+```
+
+**Use cases:**
+- Rapid prototyping without fixing type errors
+- Generating companions/OpenAPI even when types don't fully check
+- CI pipelines that run `tsc --noEmit` separately
+
+<Warning>
+  `--noCheck` still parses files and emits JavaScript, but skips the expensive semantic analysis phase. Type errors won't be caught.
+</Warning>
+
+## Controller Rewriting
+
+During emit, tsgonest **injects validation and serialization calls** directly into NestJS controller methods:
+
+### Before Compilation
+
+```typescript
+@Controller('users')
+export class UserController {
+  @Post()
+  async create(@Body() body: CreateUserDto): Promise<UserResponse> {
+    return this.usersService.create(body);
+  }
+}
+```
+
+### After Compilation
+
+```javascript
+import { validateCreateUserDto } from './dto/user.dto.CreateUserDto.tsgonest.js';
+import { serializeUserResponse } from './dto/user.dto.UserResponse.tsgonest.js';
+
+export class UserController {
+  async create(body) {
+    // Injected validation
+    const __vr = validateCreateUserDto(body);
+    if (!__vr.success) {
+      throw new TsgonestValidationError(__vr.errors);
+    }
+    body = __vr.data;
+
+    // Original method body
+    const __result = await this.usersService.create(body);
+
+    // Injected serialization
+    return serializeUserResponse(__result);
+  }
+}
+```
+
+**No decorators or interceptors required** — validation and serialization happen at compile time.
+
+<Info>
+  See [Controller Rewriting](/concepts/compilation#controller-rewriting) for details on how tsgonest transforms `@Body()`, `@Query()`, `@Param()`, and response types.
+</Info>
+
+## Multi-Platform Binaries
+
+tsgonest distributes **6 platform-specific binaries** via npm:
+
+| Package | Platform | Notes |
+|---------|----------|-------|
+| `@tsgonest/cli-darwin-arm64` | macOS Apple Silicon | |
+| `@tsgonest/cli-darwin-x64` | macOS Intel | |
+| `@tsgonest/cli-linux-arm64` | Linux ARM64 | Static binary (musl + glibc) |
+| `@tsgonest/cli-linux-x64` | Linux x64 | Static binary (musl + glibc) |
+| `@tsgonest/cli-win32-arm64` | Windows ARM64 | |
+| `@tsgonest/cli-win32-x64` | Windows x64 | |
+
+The `tsgonest` package itself is a **thin launcher** that resolves the correct binary at runtime:
+
+```javascript
+// packages/core/bin/tsgonest (simplified)
+const platform = `${process.platform}-${process.arch}`;
+const binaryPkg = `@tsgonest/cli-${platform}`;
+const binaryPath = require.resolve(`${binaryPkg}/tsgonest`);
+execFileSync(binaryPath, process.argv.slice(2), { stdio: 'inherit' });
+```
+
+**No postinstall scripts** — binaries are optional dependencies resolved on first run.
+
+## Performance Characteristics
+
+### Compilation Speed
+
+**Cold build** (no cache):
+- **~500 files**: 2-4 seconds
+- **~2000 files**: 8-15 seconds
+
+**Warm rebuild** (incremental + post-processing cache hit):
+- **Zero changes**: &lt;100ms
+- **Single file change**: 200-500ms
+
+### Memory Usage
+
+- **Baseline**: ~80MB for small projects (&lt;100 files)
+- **Large projects**: ~400MB for 2000+ files
+- **Incremental mode**: +30% memory to cache type information
+
+### Parallelization
+
+By default, tsgonest uses **multi-threaded compilation**:
+
+```go
+// internal/compiler/program.go:72
+opts.SingleThreaded = core.TSFalse
+```
+
+**Single-threaded mode** is available for debugging or reproducibility:
+
+```bash
+tsgonest build --single-threaded
+```
+
+## Related Topics
+
+<CardGroup cols={2}>
+  <Card title="Type Walker" icon="diagram-project" href="/concepts/validation">
+    How tsgonest extracts type metadata for validation
+  </Card>
+  <Card title="Serialization" icon="bolt" href="/concepts/serialization">
+    Fast JSON serialization without `JSON.stringify`
+  </Card>
+  <Card title="OpenAPI Generation" icon="book" href="/concepts/openapi">
+    Static analysis for schema extraction
+  </Card>
+  <Card title="Configuration" icon="gear" href="/config/overview">
+    All `tsgonest.config.ts` options
+  </Card>
+</CardGroup>

@@ -1,0 +1,483 @@
+---
+title: 'Numeric Tags'
+description: 'Validation constraints for number types'
+---
+
+## Overview
+
+Numeric tags provide validation constraints for number types including range limits, type constraints (integer, float, etc.), and value constraints.
+
+## Import
+
+```typescript
+import { tags } from '@tsgonest/types';
+```
+
+## Range Constraints
+
+### Minimum / Min
+
+Minimum value (inclusive): `value >= N`.
+
+```typescript
+tags.Minimum<N | { value: N; error?: string }>
+tags.Min<N | { value: N; error?: string }>  // Alias
+```
+
+<ParamField path="value" type="number" required>
+  Minimum value (inclusive)
+</ParamField>
+
+<ParamField path="error" type="string">
+  Custom error message
+</ParamField>
+
+#### Examples
+
+```typescript
+import { tags } from '@tsgonest/types';
+
+interface Example {
+  // Non-negative
+  age: number & tags.Min<0>;
+  
+  // At least 1
+  quantity: number & tags.Minimum<1>;
+  
+  // With custom error
+  price: number & tags.Min<{
+    value: 0;
+    error: 'Price must be positive';
+  }>;
+}
+```
+
+### Maximum / Max
+
+Maximum value (inclusive): `value <= N`.
+
+```typescript
+tags.Maximum<N | { value: N; error?: string }>
+tags.Max<N | { value: N; error?: string }>  // Alias
+```
+
+<ParamField path="value" type="number" required>
+  Maximum value (inclusive)
+</ParamField>
+
+<ParamField path="error" type="string">
+  Custom error message
+</ParamField>
+
+#### Examples
+
+```typescript
+import { tags } from '@tsgonest/types';
+
+interface Example {
+  // At most 100
+  percentage: number & tags.Max<100>;
+  
+  // At most 150
+  age: number & tags.Maximum<150>;
+  
+  // With custom error
+  limit: number & tags.Max<{
+    value: 1000;
+    error: 'Limit cannot exceed 1000';
+  }>;
+}
+```
+
+### ExclusiveMinimum / Gt
+
+Exclusive minimum: `value > N`.
+
+```typescript
+tags.ExclusiveMinimum<N | { value: N; error?: string }>
+tags.Gt<N | { value: N; error?: string }>  // Alias ("greater than")
+```
+
+<ParamField path="value" type="number" required>
+  Exclusive minimum (value must be strictly greater)
+</ParamField>
+
+<ParamField path="error" type="string">
+  Custom error message
+</ParamField>
+
+#### Examples
+
+```typescript
+import { tags } from '@tsgonest/types';
+
+interface Example {
+  // Strictly positive
+  price: number & tags.Gt<0>;
+  
+  // Greater than 18
+  age: number & tags.ExclusiveMinimum<18>;
+  
+  // With custom error
+  score: number & tags.Gt<{
+    value: 0;
+    error: 'Score must be positive';
+  }>;
+}
+```
+
+### ExclusiveMaximum / Lt
+
+Exclusive maximum: `value < N`.
+
+```typescript
+tags.ExclusiveMaximum<N | { value: N; error?: string }>
+tags.Lt<N | { value: N; error?: string }>  // Alias ("less than")
+```
+
+<ParamField path="value" type="number" required>
+  Exclusive maximum (value must be strictly less)
+</ParamField>
+
+<ParamField path="error" type="string">
+  Custom error message
+</ParamField>
+
+#### Examples
+
+```typescript
+import { tags } from '@tsgonest/types';
+
+interface Example {
+  // Strictly less than 100
+  percentage: number & tags.Lt<100>;
+  
+  // Less than 1
+  probability: number & tags.ExclusiveMaximum<1>;
+  
+  // With custom error
+  discount: number & tags.Lt<{
+    value: 100;
+    error: 'Discount must be less than 100';
+  }>;
+}
+```
+
+### Gte / Lte
+
+Aliases for Minimum and Maximum.
+
+```typescript
+tags.Gte<N | { value: N; error?: string }>  // Greater than or equal (alias for Min)
+tags.Lte<N | { value: N; error?: string }>  // Less than or equal (alias for Max)
+```
+
+#### Examples
+
+```typescript
+import { tags } from '@tsgonest/types';
+
+interface Example {
+  age: number & tags.Gte<0>;     // Same as Min<0>
+  score: number & tags.Lte<100>; // Same as Max<100>
+}
+```
+
+### Range
+
+Numeric range (inclusive). Sets both Minimum and Maximum.
+
+```typescript
+tags.Range<{ min: number; max: number; error?: string }>
+```
+
+<ParamField path="min" type="number" required>
+  Minimum value (inclusive)
+</ParamField>
+
+<ParamField path="max" type="number" required>
+  Maximum value (inclusive)
+</ParamField>
+
+<ParamField path="error" type="string">
+  Custom error message (applied to both min and max)
+</ParamField>
+
+#### Examples
+
+```typescript
+import { tags } from '@tsgonest/types';
+
+interface Example {
+  // Between 0 and 100
+  percentage: number & tags.Range<{ min: 0; max: 100 }>;
+  
+  // With custom error
+  age: number & tags.Range<{
+    min: 0;
+    max: 150;
+    error: 'Age must be between 0 and 150';
+  }>;
+}
+```
+
+## Value Constraints
+
+### MultipleOf / Step
+
+Value must be a multiple of N.
+
+```typescript
+tags.MultipleOf<N | { value: N; error?: string }>
+tags.Step<N | { value: N; error?: string }>  // Alias
+```
+
+<ParamField path="value" type="number" required>
+  The number that value must be a multiple of
+</ParamField>
+
+<ParamField path="error" type="string">
+  Custom error message
+</ParamField>
+
+#### Examples
+
+```typescript
+import { tags } from '@tsgonest/types';
+
+interface Example {
+  // Even numbers only
+  evenNumber: number & tags.MultipleOf<2>;
+  
+  // Price with 2 decimal places
+  price: number & tags.Step<0.01>;
+  
+  // Multiples of 5
+  quantity: number & tags.MultipleOf<5>;
+  
+  // With custom error
+  rating: number & tags.MultipleOf<{
+    value: 0.5;
+    error: 'Rating must be in 0.5 increments';
+  }>;
+}
+```
+
+## Type Constraints
+
+### Type
+
+Constrain number to a specific numeric type.
+
+```typescript
+tags.Type<T | { type: T; error?: string }>
+```
+
+<ParamField path="type" type="NumericTypeValue" required>
+  Numeric type constraint. Supported values:
+  
+  - `int32`: 32-bit signed integer (-2³¹ to 2³¹-1)
+  - `uint32`: 32-bit unsigned integer (0 to 2³²-1)
+  - `int64`: 64-bit signed integer (JS safe integer range: -2⁵³+1 to 2⁵³-1)
+  - `uint64`: 64-bit unsigned integer (0 to 2⁵³-1)
+  - `float`: Finite number (no Infinity or NaN)
+  - `double`: Finite number (no Infinity or NaN)
+</ParamField>
+
+<ParamField path="error" type="string">
+  Custom error message
+</ParamField>
+
+#### Examples
+
+```typescript
+import { tags } from '@tsgonest/types';
+
+interface Example {
+  // 32-bit integer
+  count: number & tags.Type<'int32'>;
+  
+  // Unsigned 32-bit integer
+  id: number & tags.Type<'uint32'>;
+  
+  // Safe integer (within JS safe range)
+  timestamp: number & tags.Type<'int64'>;
+  
+  // Finite float
+  temperature: number & tags.Type<'float'>;
+  
+  // With custom error
+  precision: number & tags.Type<{
+    type: 'double';
+    error: 'Must be a finite number';
+  }>;
+}
+```
+
+### Type Aliases
+
+Convenience aliases for common numeric types:
+
+```typescript
+tags.Int          // Same as Type<'int32'>
+tags.Uint         // Same as Type<'uint32'>
+tags.SafeInt      // Same as Type<'int64'> (JS safe integer range)
+tags.Float        // Same as Type<'float'> (finite)
+tags.Double       // Same as Type<'double'> (finite)
+tags.Finite       // Same as Type<'float'>
+```
+
+#### Examples
+
+```typescript
+import { tags } from '@tsgonest/types';
+
+interface Example {
+  // Integer types
+  count: number & tags.Int;
+  id: number & tags.Uint;
+  timestamp: number & tags.SafeInt;
+  
+  // Float types
+  temperature: number & tags.Float;
+  coordinate: number & tags.Double;
+  value: number & tags.Finite;
+}
+```
+
+## Sign Constraints
+
+### Positive
+
+Strictly positive: `value > 0`.
+
+```typescript
+tags.Positive  // Same as Gt<0>
+```
+
+#### Examples
+
+```typescript
+import { tags } from '@tsgonest/types';
+
+interface Example {
+  price: number & tags.Positive;
+  quantity: number & tags.Positive & tags.Int;
+}
+```
+
+### Negative
+
+Strictly negative: `value < 0`.
+
+```typescript
+tags.Negative  // Same as Lt<0>
+```
+
+#### Examples
+
+```typescript
+import { tags } from '@tsgonest/types';
+
+interface Example {
+  debt: number & tags.Negative;
+  loss: number & tags.Negative;
+}
+```
+
+### NonNegative
+
+Non-negative: `value >= 0`.
+
+```typescript
+tags.NonNegative  // Same as Min<0>
+```
+
+#### Examples
+
+```typescript
+import { tags } from '@tsgonest/types';
+
+interface Example {
+  age: number & tags.NonNegative & tags.Int;
+  balance: number & tags.NonNegative;
+}
+```
+
+### NonPositive
+
+Non-positive: `value <= 0`.
+
+```typescript
+tags.NonPositive  // Same as Max<0>
+```
+
+#### Examples
+
+```typescript
+import { tags } from '@tsgonest/types';
+
+interface Example {
+  refund: number & tags.NonPositive;
+  adjustment: number & tags.NonPositive;
+}
+```
+
+## Coercion
+
+For `@Query()` and `@Param()` parameters, use `Coerce` to automatically convert strings to numbers:
+
+```typescript
+import { tags } from '@tsgonest/types';
+
+interface QueryDto {
+  // "123" → 123
+  page: number & tags.Coerce & tags.Min<1>;
+  
+  // "50" → 50
+  limit: number & tags.Coerce & tags.Range<{ min: 1; max: 100 }>;
+  
+  // "3.14" → 3.14
+  threshold: number & tags.Coerce & tags.Positive;
+}
+```
+
+## Complete Example
+
+```typescript
+import { tags } from '@tsgonest/types';
+
+interface CreateProductDto {
+  // Positive price with 2 decimal places
+  price: number & tags.Positive & tags.MultipleOf<0.01>;
+  
+  // Non-negative integer quantity
+  quantity: number & tags.NonNegative & tags.Int;
+  
+  // Discount percentage (0-100)
+  discount: number & tags.Range<{ min: 0; max: 100 }>;
+  
+  // Star rating (0.5 increments, 0-5)
+  rating: number & tags.Min<0> & tags.Max<5> & tags.Step<0.5>;
+  
+  // Safe integer ID
+  categoryId: number & tags.SafeInt & tags.Positive;
+  
+  // Optional stock level
+  stockLevel?: number & tags.Uint;
+}
+
+interface QueryDto {
+  // Query parameters with coercion
+  page: number & tags.Coerce & tags.Int & tags.Min<1>;
+  limit: number & tags.Coerce & tags.Int & tags.Range<{ min: 1; max: 100 }>;
+  minPrice?: number & tags.Coerce & tags.NonNegative;
+}
+```
+
+## See Also
+
+- [Types Overview](/api/types/overview)
+- [String Tags](/api/types/string-tags)
+- [Array Tags](/api/types/array-tags)
+- [Validation with Branded Types Guide](/guides/validation-branded-types)

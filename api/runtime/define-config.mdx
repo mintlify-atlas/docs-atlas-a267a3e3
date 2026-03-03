@@ -1,0 +1,247 @@
+---
+title: 'defineConfig'
+description: 'Type-safe configuration helper for tsgonest.config.ts'
+---
+
+## Overview
+
+The `defineConfig` function provides type-safe autocomplete and validation for your tsgonest configuration file. It's a simple identity function that returns the config object unchanged, but enables TypeScript to provide IntelliSense for all available options.
+
+## Import
+
+```typescript
+import { defineConfig } from '@tsgonest/runtime';
+```
+
+## Signature
+
+<ParamField path="config" type="TsgonestConfig" required>
+  Configuration object for tsgonest
+  
+  <Expandable title="TsgonestConfig Properties">
+    <ParamField path="controllers" type="object">
+      Controller file discovery patterns
+      
+      <Expandable title="properties">
+        <ParamField path="include" type="string[]">
+          Glob patterns for controller files to include
+        </ParamField>
+        <ParamField path="exclude" type="string[]">
+          Glob patterns for files to exclude
+        </ParamField>
+      </Expandable>
+    </ParamField>
+    
+    <ParamField path="transforms" type="object">
+      Code transformation settings
+      
+      <Expandable title="properties">
+        <ParamField path="validation" type="boolean">
+          Generate validation companion files
+        </ParamField>
+        <ParamField path="serialization" type="boolean">
+          Generate serialization companion files
+        </ParamField>
+        <ParamField path="standardSchema" type="boolean">
+          Generate Standard Schema v1 wrappers for 60+ framework interop
+        </ParamField>
+        <ParamField path="responseSerializer" type="'guard' | 'safe' | 'none'" default="guard">
+          Controls runtime type checking for controller return values:
+          - `guard`: Lightweight boolean check (near-zero overhead)
+          - `safe`: Full validation with detailed error reporting
+          - `none`: Skip all checks (maximum performance)
+        </ParamField>
+        <ParamField path="include" type="string[]">
+          Glob patterns for source files to generate companions for (e.g., `["src/**/*.dto.ts"]`)
+        </ParamField>
+        <ParamField path="exclude" type="string[]">
+          Type name patterns to exclude from codegen (e.g., `"Legacy*"`, `"SomeInternalDto"`)
+        </ParamField>
+      </Expandable>
+    </ParamField>
+    
+    <ParamField path="openapi" type="object">
+      OpenAPI document generation settings
+      
+      <Expandable title="properties">
+        <ParamField path="output" type="string">
+          Output path for the generated OpenAPI document. Empty string disables generation.
+        </ParamField>
+        <ParamField path="title" type="string">
+          API title for the OpenAPI info section
+        </ParamField>
+        <ParamField path="version" type="string">
+          API version for the OpenAPI info section
+        </ParamField>
+        <ParamField path="description" type="string">
+          API description for the OpenAPI info section
+        </ParamField>
+        <ParamField path="contact" type="OpenAPIContact">
+          Contact info for the OpenAPI info section
+        </ParamField>
+        <ParamField path="license" type="OpenAPILicense">
+          License info for the OpenAPI info section
+        </ParamField>
+        <ParamField path="servers" type="OpenAPIServer[]">
+          Server list for the OpenAPI document
+        </ParamField>
+        <ParamField path="securitySchemes" type="Record<string, OpenAPISecurityScheme>">
+          Named security schemes for the OpenAPI document
+        </ParamField>
+        <ParamField path="security" type="Array<Record<string, string[]>>">
+          Global security requirements applied to all operations. Routes with `@public` JSDoc opt out.
+        </ParamField>
+        <ParamField path="tags" type="OpenAPITag[]">
+          Tag descriptions for the OpenAPI document
+        </ParamField>
+        <ParamField path="termsOfService" type="string">
+          URL to the API terms of service
+        </ParamField>
+      </Expandable>
+    </ParamField>
+    
+    <ParamField path="sdk" type="SDKConfig">
+      TypeScript SDK generation settings
+      
+      <Expandable title="properties">
+        <ParamField path="output" type="string" default="./sdk">
+          Output directory for generated SDK
+        </ParamField>
+        <ParamField path="input" type="string">
+          Path to OpenAPI JSON input (defaults to openapi.output)
+        </ParamField>
+      </Expandable>
+    </ParamField>
+    
+    <ParamField path="nestjs" type="object">
+      NestJS-specific settings
+      
+      <Expandable title="properties">
+        <ParamField path="globalPrefix" type="string">
+          Global route prefix (e.g., `"api"`)
+        </ParamField>
+        <ParamField path="versioning" type="VersioningConfig">
+          API versioning settings
+        </ParamField>
+      </Expandable>
+    </ParamField>
+    
+    <ParamField path="entryFile" type="string" default="main">
+      Entry point name without extension
+    </ParamField>
+    
+    <ParamField path="sourceRoot" type="string" default="src">
+      Source root directory
+    </ParamField>
+    
+    <ParamField path="deleteOutDir" type="boolean">
+      Delete output directory before build (like --clean)
+    </ParamField>
+    
+    <ParamField path="manualRestart" type="boolean">
+      Enable "rs" manual restart in dev mode
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ResponseField name="config" type="TsgonestConfig">
+  Returns the same config object passed as input
+</ResponseField>
+
+## Usage Example
+
+### Basic Configuration
+
+```typescript tsgonest.config.ts
+import { defineConfig } from '@tsgonest/runtime';
+
+export default defineConfig({
+  controllers: {
+    include: ['src/**/*.controller.ts'],
+  },
+  transforms: {
+    validation: true,
+    serialization: true,
+  },
+  openapi: {
+    output: 'dist/openapi.json',
+    title: 'My API',
+    version: '1.0.0',
+  },
+});
+```
+
+### Full Configuration
+
+```typescript tsgonest.config.ts
+import { defineConfig } from '@tsgonest/runtime';
+
+export default defineConfig({
+  controllers: {
+    include: ['src/**/*.controller.ts'],
+    exclude: ['**/*.spec.ts'],
+  },
+  transforms: {
+    validation: true,
+    serialization: true,
+    standardSchema: true,
+    responseSerializer: 'guard',
+    include: ['src/**/*.dto.ts'],
+    exclude: ['Legacy*'],
+  },
+  openapi: {
+    output: 'dist/openapi.json',
+    title: 'My API',
+    version: '1.0.0',
+    description: 'API for my application',
+    contact: {
+      name: 'API Support',
+      email: 'support@example.com',
+      url: 'https://example.com/support',
+    },
+    license: {
+      name: 'MIT',
+      url: 'https://opensource.org/licenses/MIT',
+    },
+    servers: [
+      { url: 'https://api.example.com', description: 'Production' },
+      { url: 'http://localhost:3000', description: 'Development' },
+    ],
+    securitySchemes: {
+      bearer: {
+        type: 'http',
+        scheme: 'bearer',
+        bearerFormat: 'JWT',
+      },
+    },
+    security: [{ bearer: [] }],
+  },
+  sdk: {
+    output: './sdk',
+  },
+  nestjs: {
+    globalPrefix: 'api',
+    versioning: {
+      type: 'URI',
+      defaultVersion: '1',
+      prefix: 'v',
+    },
+  },
+  entryFile: 'main',
+  sourceRoot: 'src',
+  deleteOutDir: true,
+});
+```
+
+## Notes
+
+- Configuration files can be named `tsgonest.config.ts` (recommended) or `tsgonest.config.json`
+- TypeScript config files are evaluated via Node.js for dynamic configuration
+- Use `defineConfig` to get full IntelliSense support in your IDE
+- All configuration options are optional with sensible defaults
+
+## See Also
+
+- [Configuration Overview](/config/overview)
+- [Configuration Options](/config/options)
+- [CLI Build Command](/cli/build)

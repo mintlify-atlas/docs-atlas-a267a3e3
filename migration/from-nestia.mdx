@@ -1,0 +1,390 @@
+---
+title: 'Migrating from Nestia'
+description: 'Automated migration from Nestia/Typia to tsgonest'
+---
+
+## Overview
+
+tsgonest provides an automated migration tool that converts Nestia/Typia projects to use tsgonest. The migration handles:
+
+- `@TypedRoute.*` decorators → `@Get()`, `@Post()`, etc.
+- `@TypedBody()`, `@TypedParam()`, `@TypedQuery()` → `@Body()`, `@Param()`, `@Query()`
+- `@TypedFormData.Body()` → `@FormDataBody()` + interceptor
+- Typia branded types → `@tsgonest/types` branded types
+- Package dependencies cleanup
+- Config file migration
+- Build/dev script updates
+
+<Warning>
+  The migration tool is an **AST-based codemod** that modifies your source files. Always commit your changes or use version control before running `--apply`.
+</Warning>
+
+## Quick Start
+
+<Steps>
+  <Step title="Install tsgonest">
+    ```bash
+    npm install -D tsgonest
+    ```
+  </Step>
+  
+  <Step title="Preview changes (dry-run)">
+    ```bash
+    tsgonest migrate
+    ```
+    
+    This shows a diff of all proposed changes without modifying files.
+  </Step>
+  
+  <Step title="Apply changes">
+    ```bash
+    tsgonest migrate --apply
+    ```
+    
+    Interactive mode with confirmation prompts.
+  </Step>
+  
+  <Step title="Remove old dependencies">
+    The migration tool will prompt you to remove:
+    - `@nestia/core`, `@nestia/sdk`, `nestia`
+    - `typia`
+    - Old config files (`nestia.config.ts`)
+  </Step>
+</Steps>
+
+## Migration Checklist
+
+The automated migration handles most changes, but some manual steps may be required:
+
+<AccordionGroup>
+  <Accordion title="1. Decorators (automatic)" icon="check">
+    ✅ `@TypedRoute.Get()` → `@Get()`
+    
+    ✅ `@TypedRoute.Post()` → `@Post()`
+    
+    ✅ `@TypedBody()` → `@Body()`
+    
+    ✅ `@TypedParam()` → `@Param()`
+    
+    ✅ `@TypedQuery()` → `@Query()`
+    
+    ✅ `@TypedFormData.Body()` → `@FormDataBody()` + `@UseInterceptors(FormDataInterceptor)`
+  </Accordion>
+  
+  <Accordion title="2. Branded Types (automatic)" icon="check">
+    ✅ `typia.tags.*` → `@tsgonest/types` tags
+    
+    Both `typia.tags` and `"typia.tag"` string literal formats are detected and converted.
+    
+    **Before:**
+    ```typescript
+    import { tags } from "typia";
+    
+    interface UserDto {
+      email: string & tags.Email;
+      age: number & tags.Minimum<18>;
+    }
+    ```
+    
+    **After:**
+    ```typescript
+    import { tags } from "@tsgonest/types";
+    
+    interface UserDto {
+      email: string & tags.Email;
+      age: number & tags.Minimum<18>;
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="3. SDK Generation (manual)" icon="circle-exclamation">
+    ⚠️ Nestia's SDK generation is **not directly equivalent**.
+    
+    **Nestia:**
+    - Generated via `@nestia/sdk`
+    - Type-safe client with `typia` validation/serialization built-in
+    
+    **tsgonest:**
+    - Use `tsgonest sdk` to generate TypeScript SDK from OpenAPI
+    - Or use third-party tools like [openapi-typescript](https://github.com/drwpow/openapi-typescript)
+    
+    If you relied on Nestia's SDK generation, you'll need to:
+    1. Generate OpenAPI: `tsgonest build`
+    2. Generate SDK: `tsgonest sdk` or use `openapi-typescript`
+  </Accordion>
+  
+  <Accordion title="4. E2E Tests (manual)" icon="circle-exclamation">
+    ⚠️ If you used `@nestia/e2e` or `@nestia/fetcher`, replace with standard HTTP clients:
+    
+    **Options:**
+    - Use the generated SDK from `tsgonest sdk`
+    - Use `@nestjs/testing` with `supertest`
+    - Use any HTTP client (fetch, axios, etc.) with the OpenAPI spec
+  </Accordion>
+  
+  <Accordion title="5. tsconfig.json (automatic)" icon="check">
+    ✅ Removes `baseUrl` (tsgonest computes rootDir automatically)
+    
+    ✅ Removes `typia` and `@nestia/core` transform plugins
+    
+    The migration tool cleans up `tsconfig.json` automatically.
+  </Accordion>
+</AccordionGroup>
+
+## Before & After Examples
+
+### Controller Decorators
+
+<CodeGroup>
+```typescript Before (Nestia)
+import { TypedRoute, TypedBody, TypedParam } from "@nestia/core";
+import { Controller } from "@nestjs/common";
+
+@Controller("users")
+export class UsersController {
+  @TypedRoute.Get(":id")
+  async getUser(@TypedParam("id") id: string) {
+    return { id, name: "John" };
+  }
+  
+  @TypedRoute.Post()
+  async createUser(@TypedBody() dto: CreateUserDto) {
+    return { id: "123", ...dto };
+  }
+}
+```
+
+```typescript After (tsgonest)
+import { Controller, Get, Post, Body, Param } from "@nestjs/common";
+
+@Controller("users")
+export class UsersController {
+  @Get(":id")
+  async getUser(@Param("id") id: string) {
+    return { id, name: "John" };
+  }
+  
+  @Post()
+  async createUser(@Body() dto: CreateUserDto) {
+    return { id: "123", ...dto };
+  }
+}
+```
+</CodeGroup>
+
+### Form Data Upload
+
+<CodeGroup>
+```typescript Before (Nestia)
+import { TypedFormData } from "@nestia/core";
+import { Controller } from "@nestjs/common";
+
+@Controller("upload")
+export class UploadController {
+  @TypedRoute.Post()
+  async upload(
+    @TypedFormData.Body(() => multer())
+    data: UploadDto,
+  ) {
+    return { filename: data.file.originalname };
+  }
+}
+```
+
+```typescript After (tsgonest)
+import { Controller, Post, UseInterceptors } from "@nestjs/common";
+import { FormDataBody, FormDataInterceptor } from "@tsgonest/runtime";
+
+@Controller("upload")
+export class UploadController {
+  @Post()
+  @UseInterceptors(FormDataInterceptor)
+  async upload(
+    @FormDataBody(() => multer())
+    data: UploadDto,
+  ) {
+    return { filename: data.file.originalname };
+  }
+}
+```
+</CodeGroup>
+
+### Branded Types
+
+<CodeGroup>
+```typescript Before (Typia)
+import { tags } from "typia";
+
+export interface CreateUserDto {
+  email: string & tags.Format<"email">;
+  age: number & tags.Minimum<18> & tags.Maximum<120>;
+  username: string & tags.MinLength<3> & tags.MaxLength<20>;
+}
+```
+
+```typescript After (tsgonest)
+import { tags } from "@tsgonest/types";
+
+export interface CreateUserDto {
+  email: string & tags.Email;
+  age: number & tags.Minimum<18> & tags.Maximum<120>;
+  username: string & tags.MinLength<3> & tags.MaxLength<20>;
+}
+```
+</CodeGroup>
+
+<Note>
+  `tags.Format<"email">` is automatically converted to `tags.Email` for better ergonomics.
+</Note>
+
+## CLI Options
+
+<ParamField path="--apply" type="flag">
+  Write changes to disk (default: dry-run preview).
+</ParamField>
+
+<ParamField path="--include" type="string" repeatable>
+  Glob pattern for files to migrate.
+  
+  ```bash
+  tsgonest migrate --include 'src/**/*.ts'
+  ```
+  
+  Default: `src/**/*.ts`
+</ParamField>
+
+<ParamField path="--tsconfig" type="string" default="tsconfig.json">
+  Path to tsconfig.json.
+</ParamField>
+
+<ParamField path="--cwd" type="string">
+  Working directory (default: current directory).
+</ParamField>
+
+<ParamField path="--force" type="flag">
+  Run even if git working directory is dirty.
+</ParamField>
+
+<ParamField path="--yes" type="flag">
+  Accept all prompts (non-interactive mode).
+  
+  ```bash
+  tsgonest migrate --apply --yes
+  ```
+</ParamField>
+
+## Migration Report
+
+After running `--apply`, the migration tool generates a `tsgonest-migrate-report.md` file with:
+
+- Summary of all changes
+- Statistics (files modified, decorators converted, etc.)
+- List of manual steps required
+- Diff of each file
+
+<Tip>
+  Review the migration report to ensure all changes are correct before committing.
+</Tip>
+
+## Post-Migration Steps
+
+<Steps>
+  <Step title="Verify build">
+    ```bash
+    tsgonest build
+    ```
+    
+    Ensure the project compiles without errors.
+  </Step>
+  
+  <Step title="Check OpenAPI output">
+    ```bash
+    cat dist/openapi.json
+    ```
+    
+    Verify the OpenAPI spec looks correct.
+  </Step>
+  
+  <Step title="Run tests">
+    ```bash
+    npm test
+    ```
+    
+    Ensure all tests pass. Update E2E tests if needed.
+  </Step>
+  
+  <Step title="Review companion files">
+    Check the generated `.tsgonest.js` files in `dist/` to ensure validation and serialization logic is correct.
+  </Step>
+</Steps>
+
+## Common Issues
+
+<AccordionGroup>
+  <Accordion title="SwaggerCustomizer not supported" icon="triangle-exclamation">
+    Nestia's `SwaggerCustomizer` is not directly supported. The migration tool will flag these for manual review.
+    
+    **Workaround:** Use JSDoc tags for OpenAPI customization:
+    
+    ```typescript
+    /**
+     * @summary Create a new user
+     * @description Creates a user account with the provided details
+     */
+    @Post()
+    async createUser(@Body() dto: CreateUserDto) {
+      // ...
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Dynamic decorator paths" icon="triangle-exclamation">
+    tsgonest uses static analysis and cannot handle dynamic paths:
+    
+    ```typescript
+    // Not supported
+    const prefix = process.env.PREFIX;
+    @Controller(prefix)
+    ```
+    
+    Use static strings or the `nestjs.globalPrefix` config option instead.
+  </Accordion>
+  
+  <Accordion title="Factory decorators" icon="triangle-exclamation">
+    tsgonest cannot see through factory functions that return decorators.
+    
+    **Not supported:**
+    ```typescript
+    const MyBody = () => TypedBody();
+    @Post()
+    create(@MyBody() dto: CreateDto) {}
+    ```
+    
+    **Supported (import aliases):**
+    ```typescript
+    import { Body as NestBody } from '@nestjs/common';
+    @Post()
+    create(@NestBody() dto: CreateDto) {}
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="gear" href="/config/overview">
+    Set up tsgonest.config.ts
+  </Card>
+  
+  <Card title="Validation Guide" icon="shield-check" href="/guides/validation-branded-types">
+    Learn about branded types
+  </Card>
+  
+  <Card title="OpenAPI Generation" icon="book" href="/guides/openapi-controllers">
+    Generate OpenAPI from controllers
+  </Card>
+  
+  <Card title="CLI Reference" icon="terminal" href="/cli/migrate">
+    Full migrate command reference
+  </Card>
+</CardGroup>

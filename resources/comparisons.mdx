@@ -1,0 +1,427 @@
+---
+title: Comparisons
+description: How tsgonest compares to similar tools and ecosystems in the TypeScript and NestJS space.
+---
+
+tsgonest takes a unique approach to TypeScript compilation and NestJS development. This page compares it with related tools and ecosystems.
+
+## Quick comparison table
+
+| Tool/Stack | Approach | Compilation | Validation | OpenAPI | NestJS Integration |
+|------------|----------|-------------|------------|---------|--------------------|
+| **tsgonest** | Go binary, static analysis | tsgo (~10x faster) | Generated companions | Build-time static analysis | Zero-config injection |
+| **tsgo** | Compiler only | Native Go | None | None | None |
+| **NestJS CLI** | Standard ecosystem | tsc | class-validator (runtime) | @nestjs/swagger (runtime) | Built-in |
+| **Nestia + Typia** | TS compiler plugin | tsc + ts-patch | Inline codegen | Runtime reflection | Custom decorators |
+
+## Detailed comparisons
+
+### [tsgonest vs tsgo](/resources/comparisons#vs-tsgo)
+
+What tsgonest adds on top of Microsoft's typescript-go compiler.
+
+**Key differences:**
+- tsgo is a **compiler only** — just TypeScript to JavaScript
+- tsgonest **wraps tsgo** and adds validation, serialization, and OpenAPI generation
+- Same compilation speed, but tsgonest does significantly more work
+
+**When to use which:**
+- Use **tsgo** for non-NestJS projects that just need faster compilation
+- Use **tsgonest** for NestJS backends that need validation, serialization, and OpenAPI
+
+[Read full comparison →](/resources/comparisons#vs-tsgo)
+
+---
+
+### [tsgonest vs NestJS CLI](/resources/comparisons#vs-nestjs-cli)
+
+How tsgonest replaces the standard NestJS CLI and its ecosystem.
+
+**Key differences:**
+- NestJS CLI uses **tsc** (slow) + runtime validation/serialization
+- tsgonest uses **tsgo** (~10x faster) + build-time generation
+- NestJS requires **decorator soup** on every DTO
+- tsgonest uses **types as source of truth** (one declaration, multiple uses)
+
+**Migration path:**
+1. Replace `nest build` with `tsgonest build`
+2. Convert DTOs from classes to interfaces with branded types
+3. Remove `class-validator`, `class-transformer`, `@nestjs/swagger`
+4. Remove `ValidationPipe` and `ClassSerializerInterceptor`
+
+[Read full comparison →](/resources/comparisons#vs-nestjs-cli)
+
+---
+
+### [tsgonest vs Nestia + Typia](/resources/comparisons#vs-nestia--typia)
+
+Architecture and DX comparison with the Nestia/Typia ecosystem.
+
+**Key differences:**
+- Typia is a **TypeScript compiler plugin** (requires ts-patch)
+- tsgonest is a **standalone Go binary** (no patches needed)
+- Nestia uses **custom decorators** (`@TypedRoute`, `@TypedBody`)
+- tsgonest uses **standard NestJS decorators** (no API changes)
+- Typia **inlines validation** at every call site
+- tsgonest generates **companion files** (better for tree-shaking)
+
+**Setup comparison:**
+```bash
+# Nestia + Typia
+npm install typia @nestia/core @nestia/sdk
+npx ts-patch install
+# + edit tsconfig.json to add plugins
+
+# tsgonest
+npm install tsgonest
+# That's it.
+```
+
+[Read full comparison →](/resources/comparisons#vs-nestia--typia)
+
+---
+
+## Feature matrix
+
+### Compilation
+
+| Feature | tsgonest | tsgo | NestJS CLI | Nestia |
+|---------|----------|------|------------|--------|
+| Compiler | tsgo (Go) | tsgo (Go) | tsc (TS) | tsc + ts-patch |
+| Raw speed | ~10x faster than tsc | ~10x faster than tsc | Baseline | tsc speed + plugin overhead |
+| Incremental | Yes (via tsgo) | Yes | Yes (via tsc) | Yes (via tsc) |
+| Watch mode | Built-in (`tsgonest dev`) | `--watch` flag | `nest start --watch` | External tooling |
+| Setup | Zero config | Zero config | `nest-cli.json` | ts-patch + tsconfig plugins |
+
+### Validation
+
+| Feature | tsgonest | tsgo | NestJS CLI | Nestia + Typia |
+|---------|----------|------|------------|----------------|
+| Approach | Generated companions | N/A | class-validator (runtime) | Inline codegen (ts-patch) |
+| Performance | 16.8M ops/s | N/A | 345K ops/s | Similar to tsgonest |
+| Speed vs baseline | **48x faster** | N/A | Baseline | **~40-50x faster** |
+| Type safety | Types = validators | N/A | Decorators can diverge | Types = validators |
+| Setup | Zero config | N/A | `new ValidationPipe()` | `@TypedBody()` decorator |
+| Syntax | JSDoc or branded types | N/A | Decorators | Branded types |
+| Supports interfaces | Yes | N/A | No (classes only) | Yes |
+
+### Serialization
+
+| Feature | tsgonest | tsgo | NestJS CLI | Nestia + Typia |
+|---------|----------|------|------------|----------------|
+| Approach | Generated companions | N/A | class-transformer (runtime) | Inline codegen (ts-patch) |
+| Performance | 13.2M ops/s | N/A | 9.8M ops/s (JSON.stringify) | Similar to tsgonest |
+| Speed vs baseline | **1.4x faster** | N/A | Baseline | **~1.5-2x faster** |
+| Setup | Zero config | N/A | `ClassSerializerInterceptor` | `@TypedRoute` decorator |
+
+### OpenAPI
+
+| Feature | tsgonest | tsgo | NestJS CLI | Nestia |
+|---------|----------|------|------------|--------|
+| Approach | Static analysis (build time) | N/A | Runtime reflection | Runtime reflection |
+| Setup | Config file | N/A | `SwaggerModule.createDocument()` | `NestiaSwaggerComposer.document()` |
+| Startup cost | Zero (pre-generated) | N/A | High (scans all controllers) | High (requires app boot) |
+| Decorators needed | Zero (optional `@ApiSecurity`) | N/A | Extensive (`@ApiProperty`, etc.) | `@TypedRoute`, etc. |
+| Type safety | Constraints auto-reflected | N/A | Manual duplication | Constraints auto-reflected |
+| Version | OpenAPI 3.2 | N/A | OpenAPI 3.0/3.1 | OpenAPI 3.0/3.1 |
+
+### Developer experience
+
+| Feature | tsgonest | tsgo | NestJS CLI | Nestia + Typia |
+|---------|----------|------|------------|----------------|
+| DTO syntax | Interfaces + branded types | N/A | Classes + decorators | Interfaces + branded types |
+| Decorator changes | None (standard NestJS) | N/A | None | Replaces with `@TypedRoute`, etc. |
+| Dependencies | 1 package | 1 package | 5+ packages | 3+ packages |
+| IDE support | Standard TS | Standard TS | Standard TS | Requires ts-patch language service |
+| Conflicts with other tools | None | None | None | Can conflict with SWC, esbuild |
+
+## Architecture comparison
+
+### Standalone binary vs compiler plugin
+
+**tsgonest (standalone binary):**
+```text
+┌─────────────┐
+│  tsgonest   │  Single Go binary
+│  (wraps     │  ↓
+│  tsgo)      │  Direct API access via shims
+└─────────────┘
+      ↓
+  No patches
+  No plugins
+  No setup
+```
+
+**Typia (compiler plugin):**
+```text
+┌─────────────┐
+│     tsc     │  TypeScript compiler
+│  (patched   │  ↓
+│  by         │  ts-patch modifies compiler behavior
+│  ts-patch)  │  ↓
+└─────────────┘  Typia transform plugin injects code
+      ↓
+  Requires patching
+  Requires plugin config
+  Can break IDE
+```
+
+**Trade-offs:**
+
+| Aspect | Standalone binary | Compiler plugin |
+|--------|-------------------|------------------|
+| Setup | Simple (one npm package) | Complex (patch + config) |
+| Speed | ~10x faster (tsgo) | tsc speed + plugin overhead |
+| IDE support | Always works | Requires language service plugin |
+| Tooling conflicts | None | Can conflict with SWC, esbuild, etc. |
+| Control | Full control over pipeline | Limited by plugin API |
+
+tsgonest chose the standalone binary approach for reliability and speed.
+
+---
+
+### Companion files vs inline codegen
+
+**tsgonest (companion files):**
+```text
+Source DTO:
+  user.dto.ts
+    ↓ (compile)
+Output:
+  user.dto.js                          # tsgo output
+  user.dto.CreateUserDto.tsgonest.js   # companion (validate + serialize)
+```
+
+**Typia (inline codegen):**
+```text
+Source:
+  typia.assert<CreateUserDto>(input)
+    ↓ (ts-patch transform)
+Output:
+  ((input) => {
+    if (typeof input !== 'object') throw new Error('...');
+    // ... inlined validation code
+  })(input)
+```
+
+**Trade-offs:**
+
+| Aspect | Companion files | Inline codegen |
+|--------|-----------------|----------------|
+| Bundle size | One companion per type | Inlined at every call site |
+| Tree-shaking | Unused companions excluded | All validation code included |
+| Explicit imports | Clear dependency graph | Hidden (inlined) |
+| Zero source changes | No `typia.assert<T>()` needed | Requires explicit calls |
+
+tsgonest chose companion files for better tree-shaking and zero-config injection.
+
+---
+
+### Static vs runtime OpenAPI
+
+**tsgonest (static analysis):**
+```text
+Build time:
+  Analyze controllers → Extract types → Generate openapi.json
+
+Runtime:
+  openapi.json already exists (instant)
+```
+
+**@nestjs/swagger (runtime reflection):**
+```text
+Runtime:
+  Boot app → SwaggerModule scans controllers → Generate document → Serve
+  (adds 1-5s to startup time)
+```
+
+**Trade-offs:**
+
+| Aspect | Static analysis | Runtime reflection |
+|--------|-----------------|--------------------|
+| Startup cost | Zero (pre-generated) | High (scans all routes) |
+| CI-friendly | Yes (no app boot needed) | Requires full app initialization |
+| Accuracy | Types = OpenAPI | Decorators can diverge from types |
+| Dynamic routes | Not supported (warns) | Supported |
+
+tsgonest chose static analysis for zero runtime cost and type safety.
+
+---
+
+## Ecosystem compatibility
+
+### Framework support
+
+| Framework | tsgonest | NestJS CLI | Nestia |
+|-----------|----------|------------|--------|
+| NestJS | Full support | Full support | Full support |
+| Express (standalone) | No | N/A | No |
+| Fastify (standalone) | No | N/A | No |
+
+tsgonest is **NestJS-specific** by design. For standalone Express/Fastify, use tsgo or tsc.
+
+### Tooling compatibility
+
+| Tool | tsgonest | NestJS CLI | Nestia + Typia |
+|------|----------|------------|----------------|
+| SWC | N/A (uses tsgo) | Compatible | **Incompatible** |
+| esbuild | N/A (uses tsgo) | Compatible (for bundling) | **Incompatible** |
+| Vite | N/A (backend tool) | N/A | N/A |
+| ts-node | N/A (uses tsgo) | Compatible | Requires ts-patch |
+| tsx | N/A (uses tsgo) | Compatible | **Incompatible** |
+
+tsgonest doesn't need SWC/esbuild because tsgo is already fast. Typia requires the TypeScript compiler and cannot work with alternative compilers.
+
+---
+
+## Migration paths
+
+### From NestJS CLI to tsgonest
+
+**Effort:** Low-Medium
+
+```bash
+# 1. Install tsgonest
+npm install tsgonest
+npm uninstall class-validator class-transformer @nestjs/swagger
+
+# 2. Add config
+echo 'import { defineConfig } from "@tsgonest/runtime";
+export default defineConfig({ /* ... */ });' > tsgonest.config.ts
+
+# 3. Update scripts
+# package.json:
+#   "build": "tsgonest build"
+#   "start:dev": "tsgonest dev"
+
+# 4. Convert DTOs (one at a time)
+# Before: export class CreateUserDto { @IsString() name: string; }
+# After:  export interface CreateUserDto { name: string; }
+
+# 5. Remove ValidationPipe from main.ts
+```
+
+[Full migration guide →](/migration/from-class-validator)
+
+---
+
+### From Nestia + Typia to tsgonest
+
+**Effort:** Low (automated codemod available)
+
+```bash
+# Automated migration:
+npx tsgonest migrate --apply
+
+# Manual migration:
+npm install tsgonest
+npm uninstall @nestia/core @nestia/sdk typia ts-patch
+# Remove ts-patch plugins from tsconfig.json
+# Replace @TypedRoute with @Post/@Get/etc.
+# Replace @TypedBody with @Body
+```
+
+The automated codemod handles:
+- Replacing Nestia decorators with standard NestJS decorators
+- Converting `@TypedFormData.Body()` to `@FormDataBody()`
+- Removing `typia.assert<T>()` calls
+- Cleaning up dependencies
+- Removing ts-patch config
+
+[Full migration guide →](/migration/from-nestia)
+
+---
+
+### From tsgo to tsgonest
+
+**Effort:** Very Low
+
+```bash
+# Install tsgonest
+npm install tsgonest @tsgonest/runtime
+
+# Add config (optional — tsgonest works without it)
+echo 'import { defineConfig } from "@tsgonest/runtime";
+export default defineConfig({});' > tsgonest.config.ts
+
+# Replace command
+# Before: npx @aspect-build/tsgo --project tsconfig.json
+# After:  npx tsgonest build
+```
+
+If you're not using NestJS, you can disable all features:
+```ts
+export default defineConfig({
+  transforms: { validation: false, serialization: false },
+  openapi: { output: '' },
+});
+```
+
+This makes tsgonest behave like tsgo with watch mode.
+
+---
+
+## Performance benchmarks
+
+### Compilation speed
+
+**Fixture:** Realworld example (7 controllers, 41 routes)
+
+| Tool | Time | What it does |
+|------|------|-------------|
+| tsc | 559ms | Compile only |
+| tsgo | ~56ms | Compile only (~10x faster) |
+| tsgonest | 128ms | Compile + companions + OpenAPI (~4x faster than tsc) |
+
+**Larger project** (120 controllers, 838 routes):
+
+| Tool | Cold build | Warm build |
+|------|------------|------------|
+| nest build | ~60s | ~60s (no cache) |
+| tsgonest build | ~19s | ~1.1s (with cache) |
+
+---
+
+### Validation performance
+
+**Fixture:** Simple DTO with 5 properties
+
+| Tool | Ops/sec | vs class-validator |
+|------|---------|--------------------|
+| class-validator | 345K | 1x (baseline) |
+| tsgonest | 16.8M | **48x faster** |
+| typia | ~15M | **43x faster** |
+
+---
+
+### Serialization performance
+
+**Fixture:** Simple DTO with 5 properties
+
+| Tool | Ops/sec | vs JSON.stringify |
+|------|---------|-------------------|
+| JSON.stringify | 9.8M | 1x (baseline) |
+| tsgonest | 13.2M | **1.4x faster** |
+| typia | ~14M | **1.5x faster** |
+
+Note: For complex nested objects, all tools are similar to JSON.stringify.
+
+---
+
+## Conclusion
+
+tsgonest is best suited for:
+
+- **NestJS backends** that need validation, serialization, and OpenAPI
+- Teams that want **types as source of truth** (no decorator duplication)
+- Projects that need **fast compilation** (~4-10x faster than tsc)
+- CI/CD pipelines that benefit from **build-time OpenAPI generation**
+- Teams that prefer **zero-config** tooling (no patches, no plugins)
+
+For other use cases:
+
+- **Non-NestJS projects** → use tsgo (just faster compilation)
+- **Need runtime dynamic routes** → use @nestjs/swagger (tsgonest uses static analysis)
+- **Already using Nestia + Typia** → migration is easy (automated codemod available)
+
+[Get started →](/installation)

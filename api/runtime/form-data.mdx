@@ -1,0 +1,259 @@
+---
+title: 'FormData API'
+description: 'FormDataBody decorator and FormDataInterceptor for multipart/form-data requests'
+---
+
+## Overview
+
+tsgonest provides a type-safe API for handling `multipart/form-data` file uploads using the `@FormDataBody()` decorator and `FormDataInterceptor`. This is a drop-in replacement for Nestia's `@TypedFormData.Body()` API.
+
+## Import
+
+```typescript
+import { FormDataBody, FormDataInterceptor } from '@tsgonest/runtime';
+```
+
+## FormDataBody Decorator
+
+### Signature
+
+```typescript
+function FormDataBody(
+  factory: () => any | Promise<any>
+): ParameterDecorator
+```
+
+<ParamField path="factory" type="() => any | Promise<any>" required>
+  Function that returns a configured multer instance. The multer instance handles file size limits, storage options, and file filtering.
+</ParamField>
+
+### Description
+
+Parameter decorator for multipart/form-data endpoints. Stores the multer factory in metadata so `FormDataInterceptor` can parse the request.
+
+## FormDataInterceptor
+
+### Description
+
+NestJS interceptor that processes multipart/form-data requests using a multer instance provided via `@FormDataBody()`.
+
+The interceptor:
+1. Reads the multer factory from parameter metadata set by `@FormDataBody()`
+2. Creates and caches the multer instance
+3. Runs `multer.any()` to parse the multipart request
+4. Converts multer files to web-native `File` instances
+5. Merges parsed files into `req.body` by field name
+
+## Usage Examples
+
+### Basic File Upload
+
+```typescript user.controller.ts
+import { Controller, Post, UseInterceptors } from '@nestjs/common';
+import { FormDataBody, FormDataInterceptor } from '@tsgonest/runtime';
+import multer from 'multer';
+
+interface UploadDto {
+  file: File;
+  name: string;
+}
+
+const fileMulter = () =>
+  multer({
+    limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+  });
+
+@Controller('upload')
+export class UploadController {
+  @Post()
+  @UseInterceptors(FormDataInterceptor)
+  uploadFile(@FormDataBody(() => fileMulter()) body: UploadDto) {
+    return {
+      filename: body.file.name,
+      size: body.file.size,
+      name: body.name,
+    };
+  }
+}
+```
+
+### Multiple Files
+
+```typescript
+interface MultiUploadDto {
+  files: File[];
+  description: string;
+}
+
+@Post('multi')
+@UseInterceptors(FormDataInterceptor)
+uploadMultiple(
+  @FormDataBody(() => fileMulter()) body: MultiUploadDto
+) {
+  return {
+    count: body.files.length,
+    description: body.description,
+  };
+}
+```
+
+### Image Upload with Validation
+
+```typescript
+import { tags } from '@tsgonest/types';
+
+interface ImageUploadDto {
+  image: File;
+  title: string & tags.MinLength<1> & tags.MaxLength<100>;
+  tags: string[] & tags.MinItems<1> & tags.MaxItems<10>;
+}
+
+const imageMulter = () =>
+  multer({
+    limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+    fileFilter: (_req, file, cb) => {
+      if (file.mimetype.startsWith('image/')) {
+        cb(null, true);
+      } else {
+        cb(new Error('Only image files allowed'));
+      }
+    },
+  });
+
+@Post('image')
+@UseInterceptors(FormDataInterceptor)
+uploadImage(
+  @FormDataBody(() => imageMulter()) body: ImageUploadDto
+) {
+  return {
+    title: body.title,
+    image: {
+      name: body.image.name,
+      size: body.image.size,
+      type: body.image.type,
+    },
+    tags: body.tags,
+  };
+}
+```
+
+### Storage Configuration
+
+```typescript
+import multer from 'multer';
+import path from 'path';
+
+const diskStorageMulter = () =>
+  multer({
+    storage: multer.diskStorage({
+      destination: './uploads',
+      filename: (_req, file, cb) => {
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+        cb(
+          null,
+          file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname)
+        );
+      },
+    }),
+    limits: { fileSize: 20 * 1024 * 1024 }, // 20MB
+  });
+
+@Post('upload-to-disk')
+@UseInterceptors(FormDataInterceptor)
+uploadToDisk(@FormDataBody(() => diskStorageMulter()) body: UploadDto) {
+  // Files are saved to disk, body.file contains file metadata
+  return { success: true };
+}
+```
+
+### Async Multer Factory
+
+```typescript
+const asyncMulter = async () => {
+  // Load config from database or external service
+  const config = await loadUploadConfig();
+  
+  return multer({
+    limits: { fileSize: config.maxFileSize },
+    fileFilter: config.fileFilter,
+  });
+};
+
+@Post('async')
+@UseInterceptors(FormDataInterceptor)
+asyncUpload(@FormDataBody(() => asyncMulter()) body: UploadDto) {
+  return { success: true };
+}
+```
+
+## DTO Type Safety
+
+tsgonest validates the entire DTO including files and string fields:
+
+```typescript
+import { tags } from '@tsgonest/types';
+
+interface DocumentUploadDto {
+  // File validation happens via multer config
+  document: File;
+  
+  // String fields are validated by tsgonest
+  title: string & tags.MinLength<1> & tags.MaxLength<255>;
+  category: 'report' | 'invoice' | 'contract';
+  year: number & tags.Min<2000> & tags.Max<2100> & tags.Type<'int32'>;
+}
+```
+
+## File Type Conversion
+
+`FormDataInterceptor` automatically converts multer's `Express.Multer.File` objects to web-native `File` instances. This ensures:
+
+- `instanceof File` checks work correctly in validation code
+- Consistent API with web standards
+- Type-safe file handling
+
+## Multer Caching
+
+The interceptor caches multer instances per handler to avoid recreating them on every request. The cache uses a `WeakMap` keyed by the handler function.
+
+## Error Handling
+
+Multer errors (file too large, invalid file type, etc.) are thrown as standard NestJS exceptions:
+
+```typescript
+import { Catch, ExceptionFilter, ArgumentsHost } from '@nestjs/common';
+
+@Catch()
+export class MulterExceptionFilter implements ExceptionFilter {
+  catch(exception: any, host: ArgumentsHost) {
+    const ctx = host.switchToHttp();
+    const response = ctx.getResponse();
+
+    if (exception.message?.includes('File too large')) {
+      response.status(413).send({
+        statusCode: 413,
+        message: 'File size exceeds limit',
+      });
+    } else {
+      response.status(400).send({
+        statusCode: 400,
+        message: exception.message || 'Upload failed',
+      });
+    }
+  }
+}
+```
+
+## Metadata Key
+
+The decorator uses the following metadata key (exported for advanced use cases):
+
+```typescript
+import { TSGONEST_FORM_DATA_FACTORY } from '@tsgonest/runtime';
+```
+
+## See Also
+
+- [Multer Documentation](https://github.com/expressjs/multer)
+- [NestJS File Upload Guide](https://docs.nestjs.com/techniques/file-upload)
+- [Migration from Nestia](/migration/from-nestia#form-data)

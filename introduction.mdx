@@ -1,0 +1,153 @@
+---
+title: Introduction
+description: Native-speed TypeScript compilation with generated validation, serialization, and OpenAPI for NestJS
+---
+
+# Welcome to tsgonest
+
+A Go CLI wrapping [typescript-go](https://github.com/microsoft/typescript-go) (tsgo) that replaces `tsc`, `class-validator`, `class-transformer`, and `@nestjs/swagger` with a single build step. Write plain TypeScript types — tsgonest generates validators, fast JSON serializers, and an OpenAPI 3.2 document at compile time.
+
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Get running in minutes with a working NestJS validation example
+  </Card>
+  <Card title="Installation" icon="download" href="/installation">
+    Detailed installation instructions for all platforms
+  </Card>
+  <Card title="Configuration" icon="gear" href="/config/overview">
+    Configure tsgonest for your project
+  </Card>
+  <Card title="CLI Reference" icon="terminal" href="/cli/overview">
+    Complete command-line interface documentation
+  </Card>
+</CardGroup>
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Fast Compilation" icon="bolt">
+    Native-speed compilation via tsgo (Go port of TypeScript compiler)
+  </Card>
+  <Card title="Generated Validators" icon="shield-check">
+    Automatic validation from TypeScript types for `@Body()`, `@Query()`, `@Param()`, and `@Headers()`
+  </Card>
+  <Card title="Fast JSON Serializers" icon="gauge-high">
+    String concatenation-based serializers with known property shapes
+  </Card>
+  <Card title="OpenAPI 3.2" icon="book">
+    Generated from static analysis of NestJS controllers — zero runtime decorators
+  </Card>
+  <Card title="Watch Mode" icon="eye">
+    Auto-restart development server with `tsgonest dev`
+  </Card>
+  <Card title="Standard Schema v1" icon="cube">
+    Framework interop wrappers for 60+ frameworks
+  </Card>
+</CardGroup>
+
+## How It Works
+
+Define DTOs with JSDoc or branded types:
+
+<CodeGroup>
+```typescript JSDoc
+export interface CreateUserDto {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  name: string;
+  /** @format email */
+  email: string;
+  /**
+   * @minimum 0
+   * @maximum 150
+   */
+  age: number;
+}
+```
+
+```typescript Branded Types
+import { tags } from '@tsgonest/types';
+
+export interface CreateUserDto {
+  name: string & tags.Trim & tags.Min<1> & tags.Max<255>;
+  email: string & tags.Email;
+  age: number & tags.Min<0> & tags.Max<150>;
+}
+```
+</CodeGroup>
+
+Build your project:
+
+```bash
+npx tsgonest build
+```
+
+<Info>
+That's it! Zero runtime setup needed. tsgonest injects validation and serialization into your controllers at compile time.
+</Info>
+
+Request bodies are validated, responses are fast-serialized, and `dist/openapi.json` contains your API docs.
+
+## What Gets Generated
+
+For each DTO, tsgonest creates companion files alongside the compiled JavaScript:
+
+```
+dist/
+  user.dto.js                      # tsgo output (compiled TypeScript)
+  user.dto.CreateUserDto.tsgonest.js   # companion: validate + assert + serialize + schema
+  user.dto.CreateUserDto.tsgonest.d.ts # TypeScript types for companion
+  openapi.json                     # OpenAPI 3.2 document
+```
+
+<Note>
+Controller classes (decorated with `@Controller()`) are automatically detected and skipped for companion generation — they receive inline validation and serialization injection instead.
+</Note>
+
+## Design Philosophy
+
+- **Compile-time over runtime**: All validation and serialization logic is generated at build time
+- **Type-driven**: Your TypeScript types are the single source of truth
+- **Zero decorators**: No need for `class-validator`, `class-transformer`, or `@nestjs/swagger` decorators
+- **Fast by default**: Native-speed compilation and optimized serializers
+- **Standard-compliant**: OpenAPI 3.2 output works with all tooling
+
+## Packages
+
+| Package | Description |
+|---------|-------------|
+| [`tsgonest`](https://www.npmjs.com/package/tsgonest) | CLI (auto-installs platform binary) |
+| [`@tsgonest/runtime`](https://www.npmjs.com/package/@tsgonest/runtime) | `defineConfig`, `TsgonestValidationError`, `FormDataBody`, `FormDataInterceptor` |
+| [`@tsgonest/types`](https://www.npmjs.com/package/@tsgonest/types) | Zero-runtime branded phantom types (`tags.Email`, `tags.Min`, `tags.Trim`, ...) |
+
+## Platform Support
+
+tsgonest ships platform-specific binaries for:
+
+- macOS (ARM64, x64)
+- Linux (x64, ARM64 — static binaries work on both glibc and musl/Alpine)
+- Windows (x64, ARM64)
+
+## Static Analysis Limits
+
+tsgonest intentionally stays compile-time only. A few dynamic NestJS patterns are not supported for OpenAPI extraction:
+
+<Warning>
+- Controllers declared inside factory functions (non-top-level `@Controller` classes)
+- Dynamic path arguments in `@Controller(...)`, `@Get(...)`, `@Post(...)`, etc. (e.g., `@Controller(prefix)` or `@Get(dynamicPath)`)
+</Warning>
+
+When these patterns are detected, tsgonest prints a warning and excludes those controllers/routes from the generated OpenAPI document.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Build your first NestJS app with tsgonest
+  </Card>
+  <Card title="Installation" icon="download" href="/installation">
+    Install tsgonest for your platform
+  </Card>
+</CardGroup>

@@ -1,0 +1,842 @@
+---
+title: OpenAPI Generation
+description: Static analysis for OpenAPI 3.2 schema generation from NestJS controllers
+---
+
+## Overview
+
+tsgonest generates **OpenAPI 3.2 documents** directly from your NestJS controllers using **static analysis** — no runtime metadata, no decorators beyond standard NestJS, no `reflect-metadata`.
+
+The OpenAPI document is generated at **compile time** and written to disk as a JSON file, ready for:
+
+- **API documentation** (Swagger UI, Redoc)
+- **SDK generation** (OpenAPI Generator, Kiota)
+- **Contract testing** (Pact, Postman)
+- **Schema validation** (API gateways)
+
+### Why Static Analysis?
+
+**Traditional approach** (e.g., `@nestjs/swagger`):
+
+1. Add decorators to every DTO property
+2. Run the application
+3. Use `reflect-metadata` to read decorators at runtime
+4. Generate OpenAPI from runtime metadata
+
+**Problems:**
+
+- **Duplication**: TypeScript types + decorator metadata
+- **Runtime overhead**: Reflection on every app startup
+- **Incomplete types**: Decorators can't express complex TypeScript types
+
+**tsgonest's approach**:
+
+1. Parse TypeScript source files
+2. Walk the AST and type checker
+3. Extract NestJS decorator arguments (paths, HTTP methods)
+4. Extract type metadata from DTOs
+5. Generate OpenAPI document
+6. Write to disk
+
+**Benefits:**
+
+- **Zero decorators**: Use plain TypeScript types
+- **Zero runtime cost**: OpenAPI generated at build time
+- **Complete type coverage**: Generics, unions, intersections, recursion
+- **Always in sync**: Regenerated on every build
+
+<Info>
+  tsgonest uses the **same type metadata** for validation, serialization, and OpenAPI — a single source of truth.
+</Info>
+
+## How It Works
+
+### Analysis Pipeline
+
+<Steps>
+  <Step title="Controller Discovery">
+    tsgonest scans all compiled `.js` files for classes decorated with `@Controller()`:
+
+    ```go
+    // internal/analyzer/nestjs.go
+    func AnalyzeControllers(program *shimcompiler.Program, 
+                           checker *shimchecker.Checker) ([]ControllerInfo, []string)
+    ```
+
+    **Requirements for discovery:**
+    - Class must have `@Controller()` decorator
+    - Controller path must be a string literal (not a variable)
+    - Class must be a top-level declaration (not nested or runtime-generated)
+  </Step>
+
+  <Step title="Route Extraction">
+    For each controller, tsgonest analyzes method decorators:
+
+    ```typescript
+    @Get(':id')         // HTTP method + path
+    @HttpCode(200)      // Optional status code
+    async findOne(
+      @Param('id') id: string,   // Path parameter
+      @Query() query: ListQuery  // Query parameters
+    ): Promise<UserResponse> {}
+    ```
+
+    **Recognized decorators:**
+    - `@Get()`, `@Post()`, `@Put()`, `@Delete()`, `@Patch()`, `@Head()`, `@Options()`
+    - `@Body()`, `@Query()`, `@Param()`, `@Headers()`
+    - `@HttpCode()`, `@HttpStatus()`
+  </Step>
+
+  <Step title="Type Resolution">
+    For each parameter and return type, tsgonest uses the TypeScript type checker:
+
+    ```go
+    // internal/analyzer/nestjs.go
+    paramType := checker.GetTypeAtLocation(param)
+    returnType := checker.GetReturnTypeOfSignature(signature)
+    ```
+
+    **Types are resolved through**:
+    - Import statements
+    - Type aliases
+    - Generic instantiations
+    - Intersection/union types
+  </Step>
+
+  <Step title="Schema Generation">
+    The type metadata is converted to OpenAPI schemas:
+
+    ```go
+    // internal/openapi/schema.go
+    func ToOpenAPISchema(meta *metadata.Metadata, 
+                         registry *metadata.TypeRegistry) *Schema
+    ```
+
+    **Schemas are**:
+    - Registered in `components/schemas`
+    - Referenced via `$ref` for reuse
+    - Deduplicated by type name
+  </Step>
+
+  <Step title="Document Assembly">
+    All routes, schemas, and metadata are assembled into a single `Document`:
+
+    ```go
+    // internal/openapi/generator.go
+    func Generate(controllers []analyzer.ControllerInfo, 
+                  registry *metadata.TypeRegistry, 
+                  cfg openapi.Config) *Document
+    ```
+  </Step>
+
+  <Step title="JSON Output">
+    The document is serialized to JSON and written to disk:
+
+    ```go
+    // cmd/tsgonest/build.go
+    data, _ := json.MarshalIndent(doc, "", "  ")
+    os.WriteFile(cfg.OpenAPI.Output, data, 0644)
+    ```
+  </Step>
+</Steps>
+
+## Configuration
+
+Control OpenAPI generation via `tsgonest.config.ts`:
+
+```typescript
+import { defineConfig } from '@tsgonest/runtime';
+
+export default defineConfig({
+  openapi: {
+    output: './openapi.json',
+    info: {
+      title: 'My API',
+      version: '1.0.0',
+      description: 'API documentation',
+    },
+    servers: [
+      { url: 'http://localhost:3000', description: 'Development' },
+      { url: 'https://api.example.com', description: 'Production' },
+    ],
+    // Global prefix (applied to all routes)
+    globalPrefix: '/api',
+  },
+});
+```
+
+<Tip>
+  The `output` path is resolved relative to the config file directory, not the current working directory.
+</Tip>
+
+## Schema Generation
+
+### Primitive Types
+
+```typescript
+export interface ExampleDto {
+  id: number;        // { "type": "number" }
+  name: string;      // { "type": "string" }
+  active: boolean;   // { "type": "boolean" }
+  data: any;         // {} (no type constraint)
+}
+```
+
+### Constraint Annotations
+
+JSDoc tags and branded types map to OpenAPI constraints:
+
+```typescript
+export interface CreateUserDto {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  name: string;
+  /** @format email */
+  email: string;
+  /**
+   * @minimum 0
+   * @maximum 150
+   */
+  age: number;
+}
+```
+
+**Generated schema:**
+
+```json
+{
+  "CreateUserDto": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 255
+      },
+      "email": {
+        "type": "string",
+        "format": "email"
+      },
+      "age": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 150
+      }
+    },
+    "required": ["name", "email", "age"]
+  }
+}
+```
+
+### Array Types
+
+```typescript
+export interface ListResponse {
+  users: UserDto[];
+  /**
+   * @minItems 1
+   * @maxItems 100
+   */
+  tags: string[];
+}
+```
+
+**Schema:**
+
+```json
+{
+  "users": {
+    "type": "array",
+    "items": { "$ref": "#/components/schemas/UserDto" }
+  },
+  "tags": {
+    "type": "array",
+    "items": { "type": "string" },
+    "minItems": 1,
+    "maxItems": 100
+  }
+}
+```
+
+### Enums
+
+```typescript
+export enum UserRole {
+  Admin = "admin",
+  User = "user",
+  Guest = "guest",
+}
+
+export interface User {
+  role: UserRole;
+}
+```
+
+**Schema:**
+
+```json
+{
+  "role": {
+    "type": "string",
+    "enum": ["admin", "user", "guest"]
+  }
+}
+```
+
+### Union Types
+
+Literal unions become `enum`:
+
+```typescript
+export type Status = "active" | "inactive" | "pending";
+```
+
+```json
+{
+  "type": "string",
+  "enum": ["active", "inactive", "pending"]
+}
+```
+
+Object unions become `oneOf`:
+
+```typescript
+export type Shape =
+  | { kind: "circle"; radius: number }
+  | { kind: "rectangle"; width: number; height: number };
+```
+
+```json
+{
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "kind": { "type": "string", "enum": ["circle"] },
+        "radius": { "type": "number" }
+      },
+      "required": ["kind", "radius"]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "kind": { "type": "string", "enum": ["rectangle"] },
+        "width": { "type": "number" },
+        "height": { "type": "number" }
+      },
+      "required": ["kind", "width", "height"]
+    }
+  ],
+  "discriminator": {
+    "propertyName": "kind",
+    "mapping": {
+      "circle": "#/components/schemas/Shape_0",
+      "rectangle": "#/components/schemas/Shape_1"
+    }
+  }
+}
+```
+
+### Generic Types
+
+tsgonest **flattens generic instantiations** into named schemas:
+
+```typescript
+export interface PaginatedResponse<T> {
+  data: T[];
+  page: number;
+  total: number;
+}
+
+@Get()
+findAll(): PaginatedResponse<UserDto> {}
+```
+
+**Registered schema**: `PaginatedResponse_UserDto`
+
+```json
+{
+  "PaginatedResponse_UserDto": {
+    "type": "object",
+    "properties": {
+      "data": {
+        "type": "array",
+        "items": { "$ref": "#/components/schemas/UserDto" }
+      },
+      "page": { "type": "number" },
+      "total": { "type": "number" }
+    },
+    "required": ["data", "page", "total"]
+  }
+}
+```
+
+<Warning>
+  **Generic name collisions**: If you use `PaginatedResponse<UserDto>` in one controller and `PaginatedResponse<ProductDto>` in another, both get separate schemas (`PaginatedResponse_UserDto`, `PaginatedResponse_ProductDto`).
+
+  **Pre-registered aliases** win: If you define `type UserList = PaginatedResponse<UserDto>`, the name `UserList` is used instead of `PaginatedResponse_UserDto`.
+</Warning>
+
+### Recursive Types
+
+Self-referential types use `$ref` to break cycles:
+
+```typescript
+export interface TreeNode {
+  value: number;
+  children: TreeNode[];
+}
+```
+
+```json
+{
+  "TreeNode": {
+    "type": "object",
+    "properties": {
+      "value": { "type": "number" },
+      "children": {
+        "type": "array",
+        "items": { "$ref": "#/components/schemas/TreeNode" }
+      }
+    },
+    "required": ["value", "children"]
+  }
+}
+```
+
+## Route Generation
+
+### Path Parameters
+
+```typescript
+@Get(':id')
+findOne(@Param('id') id: string): UserResponse {}
+```
+
+**OpenAPI path:**
+
+```json
+{
+  "/users/{id}": {
+    "get": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": { "type": "string" }
+        }
+      ],
+      "responses": {
+        "200": {
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/UserResponse" }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+### Query Parameters
+
+```typescript
+export interface ListQuery {
+  page?: number;
+  limit?: number;
+  search?: string;
+}
+
+@Get()
+findAll(@Query() query: ListQuery): UserResponse[] {}
+```
+
+**OpenAPI parameters:**
+
+```json
+{
+  "parameters": [
+    {
+      "name": "page",
+      "in": "query",
+      "required": false,
+      "schema": { "type": "number" }
+    },
+    {
+      "name": "limit",
+      "in": "query",
+      "required": false,
+      "schema": { "type": "number" }
+    },
+    {
+      "name": "search",
+      "in": "query",
+      "required": false,
+      "schema": { "type": "string" }
+    }
+  ]
+}
+```
+
+**Array query parameters**:
+
+```typescript
+export interface FilterQuery {
+  /** @description Multiple tags */
+  tags: string[];
+}
+```
+
+```json
+{
+  "name": "tags",
+  "in": "query",
+  "required": true,
+  "style": "form",
+  "explode": true,
+  "schema": {
+    "type": "array",
+    "items": { "type": "string" }
+  }
+}
+```
+
+This generates `?tags=a&tags=b&tags=c` (exploded style).
+
+### Request Body
+
+```typescript
+@Post()
+create(@Body() body: CreateUserDto): UserResponse {}
+```
+
+**OpenAPI requestBody:**
+
+```json
+{
+  "requestBody": {
+    "required": true,
+    "content": {
+      "application/json": {
+        "schema": { "$ref": "#/components/schemas/CreateUserDto" }
+      }
+    }
+  }
+}
+```
+
+### Response Types
+
+Return types are extracted from method signatures:
+
+```typescript
+@Get(':id')
+findOne(@Param('id') id: string): Promise<UserResponse> {}
+```
+
+**OpenAPI response:**
+
+```json
+{
+  "responses": {
+    "200": {
+      "description": "Successful response",
+      "content": {
+        "application/json": {
+          "schema": { "$ref": "#/components/schemas/UserResponse" }
+        }
+      }
+    }
+  }
+}
+```
+
+**Explicit status codes**:
+
+```typescript
+@Delete(':id')
+@HttpCode(204)
+remove(@Param('id') id: string): void {}
+```
+
+```json
+{
+  "responses": {
+    "204": {
+      "description": "No content"
+    }
+  }
+}
+```
+
+### Multiple Response Types
+
+Use the `@Returns` decorator to document multiple status codes:
+
+```typescript
+import { Returns } from '@tsgonest/runtime';
+
+@Post()
+@Returns(201, CreateUserResponse)
+@Returns(400, ErrorResponse)
+create(@Body() body: CreateUserDto) {}
+```
+
+**OpenAPI responses:**
+
+```json
+{
+  "responses": {
+    "201": {
+      "content": {
+        "application/json": {
+          "schema": { "$ref": "#/components/schemas/CreateUserResponse" }
+        }
+      }
+    },
+    "400": {
+      "content": {
+        "application/json": {
+          "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+        }
+      }
+    }
+  }
+}
+```
+
+<Note>
+  `@Returns` is **documentation-only** — it does not affect runtime serialization. The method's declared return type is used for serialization.
+</Note>
+
+## JSDoc Annotations
+
+### Route-Level Metadata
+
+```typescript
+/**
+ * Retrieve a user by ID
+ * @summary Get user
+ * @deprecated Use GET /v2/users/:id instead
+ * @security bearer
+ */
+@Get(':id')
+findOne(@Param('id') id: string): UserResponse {}
+```
+
+**OpenAPI operation:**
+
+```json
+{
+  "summary": "Get user",
+  "description": "Retrieve a user by ID",
+  "deprecated": true,
+  "security": [{ "bearer": [] }]
+}
+```
+
+### Controller-Level Tags
+
+```typescript
+/**
+ * @tag Users
+ * @security bearer
+ */
+@Controller('users')
+export class UserController {}
+```
+
+**Inherited by all routes**:
+
+```json
+{
+  "tags": ["Users"],
+  "security": [{ "bearer": [] }]
+}
+```
+
+### Public Routes
+
+Mark routes as public (no security requirement):
+
+```typescript
+/** @public */
+@Post('login')
+login(@Body() body: LoginDto): TokenResponse {}
+```
+
+**OpenAPI operation:**
+
+```json
+{
+  "security": []
+}
+```
+
+### Vendor Extensions
+
+Add custom `x-*` properties:
+
+```typescript
+/**
+ * @extension x-rate-limit 100
+ * @extension x-internal true
+ */
+@Get()
+findAll(): UserResponse[] {}
+```
+
+**OpenAPI operation:**
+
+```json
+{
+  "x-rate-limit": "100",
+  "x-internal": "true"
+}
+```
+
+## Ignoring Controllers
+
+Exclude controllers from OpenAPI:
+
+```typescript
+/**
+ * @tsgonest-ignore openapi
+ */
+@Controller('internal')
+export class InternalController {}
+```
+
+Alternative:
+
+```typescript
+/** @hidden */
+@Controller('admin')
+export class AdminController {}
+```
+
+## Limitations
+
+### Unsupported Patterns
+
+1. **Dynamic paths**:
+   ```typescript
+   const prefix = '/api';
+   @Controller(prefix) // ❌ Not statically analyzable
+   ```
+
+2. **Factory decorators**:
+   ```typescript
+   function MyGet(path: string) {
+     return Get(path); // ❌ tsgonest can't see through factories
+   }
+   ```
+
+3. **Runtime-generated controllers**:
+   ```typescript
+   function makeController() {
+     @Controller('users')
+     class UserController {}
+     return UserController;
+   }
+   ```
+
+4. **Conditional routes**:
+   ```typescript
+   if (process.env.ENABLE_ADMIN) {
+     @Get('admin') // ❌ Not statically determinable
+   }
+   ```
+
+<Warning>
+  tsgonest uses **static analysis** — decorator arguments must be **string literals** or **imported symbols**, not runtime expressions.
+</Warning>
+
+### Workarounds
+
+For dynamic behavior, use **configuration** instead of runtime logic:
+
+```typescript
+// ✅ Good: Static paths
+@Controller('users')
+export class UserController {
+  @Get(':id')
+  findOne(@Param('id') id: string) {}
+}
+
+// Configure global prefix in config
+export default defineConfig({
+  openapi: {
+    globalPrefix: process.env.API_PREFIX || '/api',
+  },
+});
+```
+
+## OpenAPI 3.2 Features
+
+### Webhooks
+
+Not yet supported — use `x-webhooks` vendor extension manually:
+
+```typescript
+export default defineConfig({
+  openapi: {
+    // Manually add webhooks to output
+  },
+});
+```
+
+### Security Schemes
+
+Define schemes in config:
+
+```typescript
+export default defineConfig({
+  openapi: {
+    securitySchemes: {
+      bearer: {
+        type: 'http',
+        scheme: 'bearer',
+        bearerFormat: 'JWT',
+      },
+      apiKey: {
+        type: 'apiKey',
+        in: 'header',
+        name: 'X-API-Key',
+      },
+    },
+    // Global security requirement
+    security: [{ bearer: [] }],
+  },
+});
+```
+
+Override per-route with JSDoc:
+
+```typescript
+/** @security apiKey */
+@Get('public')
+publicEndpoint() {}
+```
+
+## Related Topics
+
+<CardGroup cols={2}>
+  <Card title="Validation" icon="shield-check" href="/concepts/validation">
+    How schemas map to validators
+  </Card>
+  <Card title="Serialization" icon="bolt" href="/concepts/serialization">
+    Response type handling
+  </Card>
+  <Card title="Configuration" icon="gear" href="/config/overview">
+    OpenAPI config options
+  </Card>
+  <Card title="SDK Generation" icon="code" href="/cli/sdk">
+    Generate client SDKs from OpenAPI
+  </Card>
+</CardGroup>

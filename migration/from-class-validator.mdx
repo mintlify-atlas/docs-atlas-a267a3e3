@@ -1,0 +1,487 @@
+---
+title: 'Migrating from class-validator'
+description: 'Automated migration from class-validator/class-transformer to tsgonest'
+---
+
+## Overview
+
+tsgonest provides an automated migration tool that converts class-validator projects to use tsgonest's branded types. The migration handles:
+
+- Class DTOs → Interface DTOs with branded types
+- `@IsEmail()`, `@MinLength()`, etc. → `tags.Email`, `tags.MinLength<N>`
+- `@nestjs/swagger` decorator cleanup
+- `class-transformer` decorator removal
+- Package dependencies cleanup
+- Build/dev script updates
+
+<Warning>
+  The migration tool is an **AST-based codemod** that modifies your source files. Always commit your changes or use version control before running `--apply`.
+</Warning>
+
+## Quick Start
+
+<Steps>
+  <Step title="Install tsgonest">
+    ```bash
+    npm install -D tsgonest
+    ```
+  </Step>
+  
+  <Step title="Preview changes (dry-run)">
+    ```bash
+    tsgonest migrate
+    ```
+    
+    This shows a diff of all proposed changes without modifying files.
+  </Step>
+  
+  <Step title="Apply changes">
+    ```bash
+    tsgonest migrate --apply
+    ```
+    
+    Interactive mode with confirmation prompts.
+  </Step>
+  
+  <Step title="Remove old dependencies">
+    The migration tool will prompt you to remove:
+    - `class-validator`
+    - `class-transformer`
+    - `@nestjs/swagger` decorators
+  </Step>
+</Steps>
+
+## Migration Checklist
+
+The automated migration handles most changes, but some manual steps may be required:
+
+<AccordionGroup>
+  <Accordion title="1. Class → Interface (automatic)" icon="check">
+    ✅ Class DTOs converted to interfaces
+    
+    ✅ Property decorators removed
+    
+    ✅ Type annotations updated with branded types
+    
+    **Before:**
+    ```typescript
+    export class CreateUserDto {
+      @IsEmail()
+      @IsNotEmpty()
+      email: string;
+    }
+    ```
+    
+    **After:**
+    ```typescript
+    export interface CreateUserDto {
+      email: string & tags.Email & tags.MinLength<1>;
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="2. Validation Decorators (automatic)" icon="check">
+    ✅ `@IsEmail()` → `tags.Email`
+    
+    ✅ `@MinLength(N)` → `tags.MinLength<N>`
+    
+    ✅ `@IsNotEmpty()` → `tags.MinLength<1>`
+    
+    ✅ `@IsUUID()` → `tags.Uuid`
+    
+    ✅ `@IsUrl()` → `tags.Url`
+    
+    See [Decorator Mapping](#decorator-mapping) for the full list.
+  </Accordion>
+  
+  <Accordion title="3. Swagger Decorators (automatic)" icon="check">
+    ✅ `@ApiProperty()` removed (OpenAPI generated from types)
+    
+    ✅ `@ApiPropertyOptional()` removed
+    
+    ✅ `@ApiTags()` removed (use JSDoc `@tags` instead)
+    
+    ✅ `@ApiOkResponse()` removed (use `@Returns<T>()` decorator)
+  </Accordion>
+  
+  <Accordion title="4. class-transformer (automatic)" icon="check">
+    ✅ `@Transform()` decorators removed
+    
+    ✅ `@Type()` decorators removed
+    
+    ✅ `@Exclude()`, `@Expose()` decorators removed
+    
+    ⚠️ Manual coercion logic may be needed for complex transforms.
+  </Accordion>
+  
+  <Accordion title="5. Validation Pipes (manual)" icon="circle-exclamation">
+    ⚠️ Remove `ValidationPipe` from your bootstrap:
+    
+    **Before:**
+    ```typescript
+    app.useGlobalPipes(new ValidationPipe());
+    ```
+    
+    **After:**
+    ```typescript
+    // Remove — tsgonest injects validation automatically
+    ```
+    
+    tsgonest automatically validates `@Body()`, `@Query()`, `@Param()`, and `@Headers()` parameters.
+  </Accordion>
+</AccordionGroup>
+
+## Before & After Examples
+
+### Basic DTO
+
+<CodeGroup>
+```typescript Before (class-validator)
+import { IsEmail, IsNotEmpty, MinLength, IsOptional } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+
+export class CreateUserDto {
+  @ApiProperty({ example: 'user@example.com' })
+  @IsEmail()
+  @IsNotEmpty()
+  email: string;
+
+  @ApiProperty()
+  @MinLength(8)
+  password: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNotEmpty()
+  name?: string;
+}
+```
+
+```typescript After (tsgonest)
+import { tags } from '@tsgonest/types';
+
+export interface CreateUserDto {
+  email: string & tags.Email & tags.MinLength<1>;
+  password: string & tags.MinLength<8>;
+  name?: string & tags.MinLength<1>;
+}
+```
+</CodeGroup>
+
+### Numeric Constraints
+
+<CodeGroup>
+```typescript Before (class-validator)
+import { Min, Max, IsInt, IsPositive } from 'class-validator';
+
+export class ProductDto {
+  @IsPositive()
+  @IsInt()
+  quantity: number;
+
+  @Min(0)
+  @Max(10000)
+  price: number;
+}
+```
+
+```typescript After (tsgonest)
+import { tags } from '@tsgonest/types';
+
+export interface ProductDto {
+  quantity: number & tags.Positive & tags.Int;
+  price: number & tags.Minimum<0> & tags.Maximum<10000>;
+}
+```
+</CodeGroup>
+
+### Array Validation
+
+<CodeGroup>
+```typescript Before (class-validator)
+import { IsArray, ArrayNotEmpty, ArrayMinSize, ArrayMaxSize } from 'class-validator';
+
+export class TagsDto {
+  @IsArray()
+  @ArrayNotEmpty()
+  tags: string[];
+
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(5)
+  categories: string[];
+}
+```
+
+```typescript After (tsgonest)
+import { tags } from '@tsgonest/types';
+
+export interface TagsDto {
+  tags: (string & tags.MinLength<1>)[] & tags.MinItems<1>;
+  categories: string[] & tags.MinItems<1> & tags.MaxItems<5>;
+}
+```
+</CodeGroup>
+
+### Optional Fields
+
+<CodeGroup>
+```typescript Before (class-validator)
+import { IsString, IsOptional, IsEmail } from 'class-validator';
+
+export class UpdateUserDto {
+  @IsOptional()
+  @IsString()
+  name?: string;
+
+  @IsOptional()
+  @IsEmail()
+  email?: string;
+}
+```
+
+```typescript After (tsgonest)
+import { tags } from '@tsgonest/types';
+
+export interface UpdateUserDto {
+  name?: string;
+  email?: string & tags.Email;
+}
+```
+</CodeGroup>
+
+<Note>
+  `@IsOptional()` is handled by TypeScript's `?` optional modifier. `@IsString()` is redundant when the type annotation is `string`.
+</Note>
+
+## Decorator Mapping
+
+Complete mapping of class-validator decorators to tsgonest branded types:
+
+<AccordionGroup>
+  <Accordion title="String Validators">
+    | class-validator | tsgonest |
+    |-----------------|----------|
+    | `@IsEmail()` | `tags.Email` |
+    | `@IsUUID()` | `tags.Uuid` |
+    | `@IsUrl()` / `@IsURL()` | `tags.Url` |
+    | `@MinLength(N)` | `tags.MinLength<N>` |
+    | `@MaxLength(N)` | `tags.MaxLength<N>` |
+    | `@IsNotEmpty()` | `tags.MinLength<1>` |
+    | `@Matches(/pattern/)` | `tags.Pattern<"pattern">` |
+    | `@IsDateString()` | `tags.Format<"date-time">` |
+    | `@IsISO8601()` | `tags.Format<"date-time">` |
+  </Accordion>
+  
+  <Accordion title="Numeric Validators">
+    | class-validator | tsgonest |
+    |-----------------|----------|
+    | `@Min(N)` | `tags.Minimum<N>` |
+    | `@Max(N)` | `tags.Maximum<N>` |
+    | `@IsPositive()` | `tags.Positive` |
+    | `@IsNegative()` | `tags.Negative` |
+    | `@IsInt()` | `tags.Int` |
+  </Accordion>
+  
+  <Accordion title="Array Validators">
+    | class-validator | tsgonest |
+    |-----------------|----------|
+    | `@ArrayMinSize(N)` | `tags.MinItems<N>` |
+    | `@ArrayMaxSize(N)` | `tags.MaxItems<N>` |
+    | `@ArrayNotEmpty()` | `tags.MinItems<1>` |
+  </Accordion>
+  
+  <Accordion title="Type Validators (removed)">
+    These decorators are redundant with TypeScript's type system:
+    
+    - `@IsString()` — use `string` type
+    - `@IsNumber()` — use `number` type
+    - `@IsBoolean()` — use `boolean` type
+    - `@IsArray()` — use `T[]` type
+    - `@IsObject()` — use `object` type
+  </Accordion>
+</AccordionGroup>
+
+## CLI Options
+
+<ParamField path="--apply" type="flag">
+  Write changes to disk (default: dry-run preview).
+</ParamField>
+
+<ParamField path="--include" type="string" repeatable>
+  Glob pattern for files to migrate.
+  
+  ```bash
+  tsgonest migrate --include 'src/**/*.dto.ts'
+  ```
+  
+  Default: `src/**/*.ts`
+</ParamField>
+
+<ParamField path="--force" type="flag">
+  Run even if git working directory is dirty.
+</ParamField>
+
+<ParamField path="--yes" type="flag">
+  Accept all prompts (non-interactive mode).
+  
+  ```bash
+  tsgonest migrate --apply --yes
+  ```
+</ParamField>
+
+## Post-Migration Steps
+
+<Steps>
+  <Step title="Remove ValidationPipe">
+    Update your `main.ts` to remove `ValidationPipe`:
+    
+    ```typescript main.ts
+    import { NestFactory } from '@nestjs/core';
+    import { AppModule } from './app.module';
+    
+    async function bootstrap() {
+      const app = await NestFactory.create(AppModule);
+      
+      // Remove this:
+      // app.useGlobalPipes(new ValidationPipe());
+      
+      await app.listen(3000);
+    }
+    bootstrap();
+    ```
+  </Step>
+  
+  <Step title="Verify build">
+    ```bash
+    tsgonest build
+    ```
+    
+    Ensure the project compiles without errors.
+  </Step>
+  
+  <Step title="Check validation">
+    Test that validation works correctly:
+    
+    ```bash
+    curl -X POST http://localhost:3000/users \
+      -H 'Content-Type: application/json' \
+      -d '{"email": "invalid"}'
+    ```
+    
+    Should return a validation error with detailed diagnostics.
+  </Step>
+  
+  <Step title="Run tests">
+    ```bash
+    npm test
+    ```
+    
+    Update tests if they rely on `class-validator` error formats.
+  </Step>
+</Steps>
+
+## Common Issues
+
+<AccordionGroup>
+  <Accordion title="Custom validators not supported" icon="triangle-exclamation">
+    class-validator's custom validators (`@Validate()`) are not automatically migrated.
+    
+    **Workaround:** Use JSDoc `@pattern` or implement custom validation logic:
+    
+    ```typescript
+    interface UserDto {
+      /**
+       * @pattern ^[a-z0-9-]+$
+       */
+      username: string;
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Nested validation" icon="triangle-exclamation">
+    `@ValidateNested()` is removed. tsgonest validates nested objects automatically:
+    
+    **Before:**
+    ```typescript
+    class CreateUserDto {
+      @ValidateNested()
+      @Type(() => AddressDto)
+      address: AddressDto;
+    }
+    ```
+    
+    **After:**
+    ```typescript
+    interface CreateUserDto {
+      address: AddressDto;
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Complex transforms" icon="triangle-exclamation">
+    Complex `@Transform()` logic needs manual migration:
+    
+    **Before:**
+    ```typescript
+    class UserDto {
+      @Transform(({ value }) => value?.toLowerCase())
+      email: string;
+    }
+    ```
+    
+    **After (manual):**
+    ```typescript
+    @Post()
+    async create(@Body() dto: CreateUserDto) {
+      dto.email = dto.email?.toLowerCase();
+      // ...
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="@IsIn() enum validation" icon="circle-exclamation">
+    `@IsIn(['a', 'b'])` is not directly supported.
+    
+    **Workaround:** Use TypeScript union types:
+    
+    ```typescript
+    interface UserDto {
+      role: 'admin' | 'user' | 'guest';
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Migration Report
+
+After running `--apply`, the migration tool generates a `tsgonest-migrate-report.md` file with:
+
+- Summary of all changes
+- Statistics (classes converted, decorators removed, etc.)
+- List of manual steps required
+- Diff of each file
+
+<Tip>
+  Review the migration report to ensure all changes are correct before committing.
+</Tip>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="gear" href="/config/overview">
+    Set up tsgonest.config.ts
+  </Card>
+  
+  <Card title="Branded Types Guide" icon="tags" href="/guides/validation-branded-types">
+    Learn about @tsgonest/types
+  </Card>
+  
+  <Card title="Validation Guide" icon="shield-check" href="/guides/validation-jsdoc">
+    Alternative: JSDoc validation
+  </Card>
+  
+  <Card title="CLI Reference" icon="terminal" href="/cli/migrate">
+    Full migrate command reference
+  </Card>
+</CardGroup>

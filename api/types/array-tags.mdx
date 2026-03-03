@@ -1,0 +1,327 @@
+---
+title: 'Array Tags'
+description: 'Validation constraints for array types'
+---
+
+## Overview
+
+Array tags provide validation constraints for array types including size limits and uniqueness requirements. These tags are applied to the array type itself, not to individual elements.
+
+## Import
+
+```typescript
+import { tags } from '@tsgonest/types';
+```
+
+## Size Constraints
+
+### MinItems
+
+Minimum array length (inclusive).
+
+```typescript
+tags.MinItems<N | { value: N; error?: string }>
+```
+
+<ParamField path="value" type="number" required>
+  Minimum number of items (inclusive)
+</ParamField>
+
+<ParamField path="error" type="string">
+  Custom error message
+</ParamField>
+
+#### Examples
+
+```typescript
+import { tags } from '@tsgonest/types';
+
+interface Example {
+  // Non-empty array
+  tags: string[] & tags.MinItems<1>;
+  
+  // At least 2 items
+  choices: string[] & tags.MinItems<2>;
+  
+  // With custom error
+  categories: string[] & tags.MinItems<{
+    value: 1;
+    error: 'At least one category is required';
+  }>;
+}
+```
+
+### MaxItems
+
+Maximum array length (inclusive).
+
+```typescript
+tags.MaxItems<N | { value: N; error?: string }>
+```
+
+<ParamField path="value" type="number" required>
+  Maximum number of items (inclusive)
+</ParamField>
+
+<ParamField path="error" type="string">
+  Custom error message
+</ParamField>
+
+#### Examples
+
+```typescript
+import { tags } from '@tsgonest/types';
+
+interface Example {
+  // At most 10 items
+  tags: string[] & tags.MaxItems<10>;
+  
+  // At most 5 items
+  topPicks: string[] & tags.MaxItems<5>;
+  
+  // With custom error
+  images: File[] & tags.MaxItems<{
+    value: 10;
+    error: 'Cannot upload more than 10 images';
+  }>;
+}
+```
+
+### Combining Size Constraints
+
+You can combine MinItems and MaxItems to specify a range:
+
+```typescript
+import { tags } from '@tsgonest/types';
+
+interface Example {
+  // Between 1 and 10 items
+  tags: string[] & tags.MinItems<1> & tags.MaxItems<10>;
+  
+  // Between 2 and 5 items
+  authors: string[] & tags.MinItems<2> & tags.MaxItems<5>;
+}
+```
+
+## Uniqueness
+
+### UniqueItems / Unique
+
+Array items must be unique (no duplicates).
+
+```typescript
+tags.UniqueItems<{ error?: string }>
+tags.Unique<{ error?: string }>  // Alias
+```
+
+<ParamField path="error" type="string">
+  Custom error message
+</ParamField>
+
+#### Examples
+
+```typescript
+import { tags } from '@tsgonest/types';
+
+interface Example {
+  // Simple uniqueness
+  tags: string[] & tags.UniqueItems;
+  
+  // Using alias
+  ids: number[] & tags.Unique;
+  
+  // With custom error
+  emails: string[] & tags.UniqueItems<{
+    error: 'Email addresses must be unique';
+  }>;
+}
+```
+
+## Element Constraints
+
+You can combine array tags with element constraints:
+
+```typescript
+import { tags } from '@tsgonest/types';
+
+interface Example {
+  // Array of validated email strings
+  emails: (string & tags.Email)[] & tags.MinItems<1> & tags.UniqueItems;
+  
+  // Array of positive integers
+  quantities: (number & tags.Int & tags.Positive)[] & tags.MaxItems<100>;
+  
+  // Array of non-empty strings
+  names: (string & tags.MinLength<1>)[] & tags.MinItems<1> & tags.MaxItems<10>;
+}
+```
+
+## Complete Examples
+
+### Product Tags
+
+```typescript
+import { tags } from '@tsgonest/types';
+
+interface ProductDto {
+  // 1-10 unique tags, each 1-50 characters
+  tags:
+    | (string & tags.MinLength<1> & tags.MaxLength<50>)[]
+    & tags.MinItems<1>
+    & tags.MaxItems<10>
+    & tags.UniqueItems;
+}
+```
+
+### User Roles
+
+```typescript
+import { tags } from '@tsgonest/types';
+
+type Role = 'admin' | 'editor' | 'viewer';
+
+interface UserDto {
+  // At least one unique role
+  roles: Role[] & tags.MinItems<1> & tags.UniqueItems;
+}
+```
+
+### Image Upload
+
+```typescript
+import { tags } from '@tsgonest/types';
+
+interface GalleryDto {
+  // 1-20 images
+  images: File[] & tags.MinItems<1> & tags.MaxItems<20>;
+  
+  // Optional captions (same length as images)
+  captions?: (string & tags.MaxLength<200>)[];
+}
+```
+
+### Survey Responses
+
+```typescript
+import { tags } from '@tsgonest/types';
+
+interface SurveyDto {
+  // At least 2 unique selections from predefined options
+  selections:
+    | string[]
+    & tags.MinItems<2>
+    & tags.MaxItems<10>
+    & tags.UniqueItems;
+  
+  // Ratings (1-5) for each selection
+  ratings: (number & tags.Int & tags.Range<{ min: 1; max: 5 }>)[];
+}
+```
+
+### Query Parameters
+
+```typescript
+import { tags } from '@tsgonest/types';
+
+interface FilterDto {
+  // Optional array of IDs with coercion
+  ids?: (number & tags.Coerce & tags.Positive & tags.Int)[] & tags.UniqueItems;
+  
+  // Optional array of tags
+  tags?: (string & tags.MinLength<1>)[] & tags.MaxItems<5>;
+}
+
+// Usage: GET /products?ids=1,2,3&tags=electronics,gadgets
+```
+
+### Nested Arrays
+
+```typescript
+import { tags } from '@tsgonest/types';
+
+interface MatrixDto {
+  // 2D array (1-10 rows, each with 1-10 columns)
+  matrix:
+    | (number[] & tags.MinItems<1> & tags.MaxItems<10>)[]
+    & tags.MinItems<1>
+    & tags.MaxItems<10>;
+}
+```
+
+## Validation Behavior
+
+### Size Validation
+
+Size constraints check the `length` property of the array:
+
+```typescript
+import { tags } from '@tsgonest/types';
+
+type Tags = string[] & tags.MinItems<1> & tags.MaxItems<5>;
+
+// Valid
+const valid1: Tags = ['tag1'];              // length = 1 ✓
+const valid2: Tags = ['a', 'b', 'c'];       // length = 3 ✓
+const valid3: Tags = ['1', '2', '3', '4', '5']; // length = 5 ✓
+
+// Invalid
+const invalid1: Tags = [];                  // length = 0 ✗
+const invalid2: Tags = ['1','2','3','4','5','6']; // length = 6 ✗
+```
+
+### Uniqueness Validation
+
+Uniqueness uses strict equality (`===`) for primitive types and deep equality for objects:
+
+```typescript
+import { tags } from '@tsgonest/types';
+
+type UniqueStrings = string[] & tags.UniqueItems;
+type UniqueNumbers = number[] & tags.UniqueItems;
+
+// Valid
+const valid1: UniqueStrings = ['a', 'b', 'c'];  // All unique ✓
+const valid2: UniqueNumbers = [1, 2, 3];        // All unique ✓
+
+// Invalid
+const invalid1: UniqueStrings = ['a', 'b', 'a']; // Duplicate 'a' ✗
+const invalid2: UniqueNumbers = [1, 2, 2, 3];    // Duplicate 2 ✗
+```
+
+### Element Validation
+
+Element constraints are validated for each item:
+
+```typescript
+import { tags } from '@tsgonest/types';
+
+type Emails = (string & tags.Email)[] & tags.MinItems<1>;
+
+// Valid
+const valid: Emails = ['user@example.com', 'admin@test.com'];
+
+// Invalid - array too short
+const invalid1: Emails = []; // MinItems<1> fails ✗
+
+// Invalid - element validation fails
+const invalid2: Emails = ['user@example.com', 'invalid']; // Second item not an email ✗
+```
+
+## Performance Considerations
+
+- **MinItems/MaxItems**: O(1) — checks `array.length`
+- **UniqueItems**: O(n) — uses a `Set` for duplicate detection
+- **Element validation**: O(n × validation_cost) — validates each element
+
+For large arrays with complex element validation, consider:
+- Setting reasonable `MaxItems` limits
+- Using simpler element constraints when possible
+- Implementing pagination for very large datasets
+
+## See Also
+
+- [Types Overview](/api/types/overview)
+- [String Tags](/api/types/string-tags)
+- [Numeric Tags](/api/types/numeric-tags)
+- [Validation with Branded Types Guide](/guides/validation-branded-types)
+- [Array Validation Guide](/guides/validation-arrays)

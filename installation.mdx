@@ -1,0 +1,386 @@
+---
+title: Installation
+description: Detailed installation instructions for tsgonest on all platforms
+---
+
+# Installation
+
+Install tsgonest and get started with type-safe NestJS development.
+
+## Requirements
+
+- **Node.js**: 18.0.0 or higher
+- **Package Manager**: npm, pnpm, or yarn
+- **NestJS**: 9.0.0 or higher (recommended)
+
+## Quick Install
+
+<CodeGroup>
+```bash npm
+npm install tsgonest @tsgonest/runtime @tsgonest/types
+```
+
+```bash pnpm
+pnpm add tsgonest @tsgonest/runtime @tsgonest/types
+```
+
+```bash yarn
+yarn add tsgonest @tsgonest/runtime @tsgonest/types
+```
+</CodeGroup>
+
+<Info>
+The platform-specific binary for your operating system will be automatically installed. No postinstall scripts or manual downloads required.
+</Info>
+
+## Package Descriptions
+
+### `tsgonest` (CLI)
+
+The main CLI package that wraps the platform-specific binary. When you run `npx tsgonest`, it automatically resolves and executes the correct binary for your platform.
+
+**What it provides:**
+- `tsgonest build` - Production build
+- `tsgonest dev` - Watch mode with auto-restart
+- `tsgonest migrate` - Migration from class-validator/nestia
+
+### `@tsgonest/runtime`
+
+Lightweight runtime utilities for configuration and error handling.
+
+**What it provides:**
+- `defineConfig()` - Type-safe config helper
+- `TsgonestValidationError` - Validation error class
+- `FormDataBody` - FormData decorator
+- `FormDataInterceptor` - File upload interceptor
+
+### `@tsgonest/types`
+
+Zero-runtime branded phantom types for type-safe validation constraints.
+
+**What it provides:**
+- `tags.Email`, `tags.Uuid`, `tags.Url` - Format constraints
+- `tags.MinLength`, `tags.MaxLength` - String length constraints
+- `tags.Minimum`, `tags.Maximum` - Numeric constraints
+- `tags.Pattern`, `tags.StartsWith`, `tags.Includes` - String pattern constraints
+- And many more...
+
+<Note>
+All `@tsgonest/types` exports are zero-runtime types — they have no effect at runtime and produce no JavaScript output. They exist purely for compile-time validation and IDE autocomplete.
+</Note>
+
+## Platform Support
+
+tsgonest ships pre-built binaries for all major platforms:
+
+| Platform | Architecture | Package |
+|----------|-------------|----------|
+| macOS | ARM64 (Apple Silicon) | `@tsgonest/cli-darwin-arm64` |
+| macOS | x64 (Intel) | `@tsgonest/cli-darwin-x64` |
+| Linux | x64 | `@tsgonest/cli-linux-x64` |
+| Linux | ARM64 | `@tsgonest/cli-linux-arm64` |
+| Windows | x64 | `@tsgonest/cli-win32-x64` |
+| Windows | ARM64 | `@tsgonest/cli-win32-arm64` |
+
+<Info>
+Linux binaries are statically compiled with `CGO_ENABLED=0` and work on both glibc (Ubuntu, Debian, Fedora) and musl (Alpine Linux) without any additional dependencies.
+</Info>
+
+## Development vs Production Installation
+
+### Development (Recommended)
+
+Install as a dev dependency:
+
+```bash
+npm install -D tsgonest @tsgonest/runtime @tsgonest/types
+```
+
+This is the recommended approach since tsgonest is a build tool that's only needed during development and CI/CD.
+
+### Production
+
+If you need tsgonest available in production (e.g., for dynamic builds), install as a regular dependency:
+
+```bash
+npm install tsgonest @tsgonest/runtime @tsgonest/types
+```
+
+<Warning>
+Most projects should install tsgonest as a dev dependency. Only install as a production dependency if you're building TypeScript at runtime (uncommon).
+</Warning>
+
+## Verification
+
+Verify your installation:
+
+```bash
+npx tsgonest --version
+```
+
+You should see output like:
+
+```
+tsgonest v0.7.0
+```
+
+Check which platform binary is being used:
+
+```bash
+npx tsgonest build --help
+```
+
+## Docker Installation
+
+For Docker containers, install tsgonest in your Dockerfile:
+
+<CodeGroup>
+```dockerfile Alpine Linux
+FROM node:18-alpine
+
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+
+# Install dependencies
+RUN npm ci
+
+# Copy source
+COPY . .
+
+# Build with tsgonest
+RUN npx tsgonest build
+
+# Run
+CMD ["node", "dist/main.js"]
+```
+
+```dockerfile Ubuntu/Debian
+FROM node:18-slim
+
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+
+# Install dependencies
+RUN npm ci
+
+# Copy source
+COPY . .
+
+# Build with tsgonest
+RUN npx tsgonest build
+
+# Run
+CMD ["node", "dist/main.js"]
+```
+</CodeGroup>
+
+<Info>
+The Linux x64 static binary works seamlessly in Alpine Linux (musl) and standard Linux distributions (glibc) without any additional configuration.
+</Info>
+
+## CI/CD Installation
+
+### GitHub Actions
+
+```yaml
+name: Build
+
+on: [push, pull_request]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Build with tsgonest
+        run: npx tsgonest build
+      
+      - name: Run tests
+        run: npm test
+```
+
+### GitLab CI
+
+```yaml
+image: node:18
+
+build:
+  stage: build
+  script:
+    - npm ci
+    - npx tsgonest build
+  artifacts:
+    paths:
+      - dist/
+```
+
+### CircleCI
+
+```yaml
+version: 2.1
+
+jobs:
+  build:
+    docker:
+      - image: cimg/node:18.0
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - v1-deps-{{ checksum "package-lock.json" }}
+      - run: npm ci
+      - save_cache:
+          key: v1-deps-{{ checksum "package-lock.json" }}
+          paths:
+            - node_modules
+      - run: npx tsgonest build
+      - run: npm test
+```
+
+## Monorepo Installation
+
+For monorepos using pnpm workspaces, npm workspaces, or yarn workspaces:
+
+### pnpm Workspace
+
+Install at the root:
+
+```bash
+pnpm add -D -w tsgonest @tsgonest/runtime @tsgonest/types
+```
+
+Or in a specific workspace:
+
+```bash
+pnpm add -D tsgonest @tsgonest/runtime @tsgonest/types --filter @myorg/api
+```
+
+### npm Workspace
+
+```bash
+npm install -D tsgonest @tsgonest/runtime @tsgonest/types -w @myorg/api
+```
+
+### Yarn Workspace
+
+```bash
+yarn workspace @myorg/api add -D tsgonest @tsgonest/runtime @tsgonest/types
+```
+
+## Troubleshooting
+
+### Binary Not Found
+
+If you see an error like:
+
+```
+Error: Cannot find module '@tsgonest/cli-darwin-arm64'
+```
+
+**Solution:** Re-install dependencies to ensure platform-specific packages are installed:
+
+```bash
+rm -rf node_modules package-lock.json
+npm install
+```
+
+### Permission Denied (Linux/macOS)
+
+If you see:
+
+```
+EACCES: permission denied, open '/path/to/tsgonest'
+```
+
+**Solution:** Ensure the binary has execute permissions:
+
+```bash
+chmod +x node_modules/@tsgonest/cli-*/tsgonest*
+```
+
+### Windows PATH Issues
+
+If `npx tsgonest` doesn't work on Windows:
+
+**Solution:** Use `npx` with the full command:
+
+```bash
+npx tsgonest build
+```
+
+Or add to your PATH:
+
+```powershell
+$env:PATH += ";$(npm bin)"
+```
+
+### Alpine Linux / musl Issues
+
+The Linux x64 static binary should work on Alpine without issues. If you encounter problems:
+
+**Solution:** Verify you're using the latest version:
+
+```bash
+npm install tsgonest@latest
+```
+
+### Node.js Version Mismatch
+
+tsgonest requires Node.js 18 or higher. Check your version:
+
+```bash
+node --version
+```
+
+**Solution:** Upgrade Node.js using [nvm](https://github.com/nvm-sh/nvm) or [fnm](https://github.com/Schniz/fnm):
+
+```bash
+# Using nvm
+nvm install 18
+nvm use 18
+
+# Using fnm
+fnm install 18
+fnm use 18
+```
+
+## Uninstallation
+
+To remove tsgonest:
+
+```bash
+npm uninstall tsgonest @tsgonest/runtime @tsgonest/types
+```
+
+Platform-specific binaries will be automatically removed along with the main package.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Build your first application with tsgonest
+  </Card>
+  <Card title="Configuration" icon="gear" href="/config/overview">
+    Configure tsgonest for your project
+  </Card>
+  <Card title="CLI Reference" icon="terminal" href="/cli/overview">
+    Learn about all available commands
+  </Card>
+  <Card title="Migration Guide" icon="arrow-right" href="/migration/from-nestia">
+    Migrate from class-validator or nestia
+  </Card>
+</CardGroup>

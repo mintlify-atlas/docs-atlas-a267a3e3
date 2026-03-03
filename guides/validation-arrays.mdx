@@ -1,0 +1,503 @@
+---
+title: Array Validation
+description: Master array validation — length constraints, uniqueness, element validation, and nested arrays.
+---
+
+Arrays in tsgonest support both **collection-level constraints** (length, uniqueness) and **element-level constraints** (validate each item). You can use JSDoc tags or branded types — both produce identical validators.
+
+## Collection-Level Constraints
+
+These constraints apply to the **array as a whole**, not to individual elements.
+
+<Tabs>
+  <Tab title="Branded Types">
+    ```ts
+    import { MinItems, MaxItems, UniqueItems } from '@tsgonest/types';
+
+    interface CreatePostDto {
+      // At least 1 tag
+      tags: string[] & MinItems<1>;
+
+      // No more than 5 attachments
+      attachments: File[] & MaxItems<5>;
+
+      // 1-10 unique categories
+      categories: string[] & MinItems<1> & MaxItems<10> & UniqueItems;
+    }
+    ```
+
+    <Warning>
+      Array constraints **intersect with the array type**, not the element type:
+
+      ```ts
+      // ✅ Correct
+      tags: string[] & MinItems<1>;
+
+      // ❌ Wrong — constraint on element
+      tags: (string & MinItems<1>)[];
+      ```
+    </Warning>
+  </Tab>
+  <Tab title="JSDoc Tags">
+    ```ts
+    interface CreatePostDto {
+      /**
+       * @minItems 1
+       */
+      tags: string[];
+
+      /**
+       * @maxItems 5
+       */
+      attachments: File[];
+
+      /**
+       * @minItems 1
+       * @maxItems 10
+       * @uniqueItems
+       */
+      categories: string[];
+    }
+    ```
+
+    JSDoc tags go on the **property**, not the element type.
+  </Tab>
+</Tabs>
+
+### MinItems
+
+Minimum array length (inclusive).
+
+```ts
+import { MinItems } from '@tsgonest/types';
+
+interface OrderDto {
+  // At least one item required
+  items: OrderItem[] & MinItems<1>;
+
+  // With custom error
+  recipients: string[] & MinItems<{
+    value: 1;
+    error: "At least one recipient is required";
+  }>;
+}
+```
+
+Generated validator:
+
+```js
+if (!Array.isArray(input.items)) throw new Error('items: expected array');
+if (input.items.length < 1) throw new Error('items: array length must be >= 1');
+```
+
+### MaxItems
+
+Maximum array length (inclusive).
+
+```ts
+import { MaxItems } from '@tsgonest/types';
+
+interface UploadDto {
+  // No more than 10 files
+  files: FileItem[] & MaxItems<10>;
+
+  // With custom error
+  attachments: string[] & MaxItems<{
+    value: 5;
+    error: "You can attach up to 5 files";
+  }>;
+}
+```
+
+### UniqueItems
+
+All elements must be unique. No parameter needed.
+
+```ts
+import { UniqueItems, Unique } from '@tsgonest/types';
+
+interface PermissionsDto {
+  // No duplicate scopes
+  scopes: string[] & UniqueItems;
+
+  // Alias — identical behavior
+  roles: string[] & Unique;
+
+  // With custom error
+  tags: string[] & UniqueItems<{ error: "Tags must be unique" }>;
+}
+```
+
+Uniqueness is checked by:
+
+- **Value** for primitives (`string[]`, `number[]`, `boolean[]`)
+- **Deep equality** for objects
+
+Generated validator for primitives:
+
+```js
+const seen = new Set();
+for (const item of input.scopes) {
+  if (seen.has(item)) throw new Error('scopes: array items must be unique');
+  seen.add(item);
+}
+```
+
+For objects, a deep equality check is used.
+
+## Element-Level Constraints
+
+Validate each array element individually:
+
+<Tabs>
+  <Tab title="Branded Types">
+    ```ts
+    import { Email, Uuid, Min, Max, Int } from '@tsgonest/types';
+
+    interface InviteDto {
+      // Each element must be a valid email
+      emails: (string & Email)[];
+
+      // Each ID must be a UUID
+      ids: (string & Uuid)[];
+
+      // Each quantity must be a positive integer
+      quantities: (number & Int & Min<1>)[];
+    }
+    ```
+
+    Parentheses are important when combining element constraints with array constraints:
+
+    ```ts
+    // ✅ Correct — element is validated, then array length
+    emails: (string & Email)[] & MinItems<1> & UniqueItems;
+
+    // ❌ Wrong — constraint order unclear
+    emails: string & Email[] & MinItems<1>;
+    ```
+  </Tab>
+  <Tab title="JSDoc Tags">
+    ```ts
+    interface InviteDto {
+      emails: EmailAddress[];
+      ids: ProductId[];
+      quantities: Quantity[];
+    }
+
+    /** @format email */
+    type EmailAddress = string;
+
+    /** @format uuid */
+    type ProductId = string;
+
+    /**
+     * @type int32
+     * @minimum 1
+     */
+    type Quantity = number;
+    ```
+
+    JSDoc tags on type aliases apply to each element.
+  </Tab>
+</Tabs>
+
+## Combining Element and Collection Constraints
+
+You can validate both the array and its elements:
+
+```ts
+import {
+  Email, MinItems, MaxItems, UniqueItems,
+  MinLength, MaxLength, Trim,
+} from '@tsgonest/types';
+
+interface BulkInviteDto {
+  // 1-50 unique, validated emails
+  emails: (string & Email)[] & MinItems<1> & MaxItems<50> & UniqueItems;
+}
+
+interface ArticleDto {
+  // 1-10 unique tags, each 1-30 chars, trimmed
+  tags: (string & Trim & MinLength<1> & MaxLength<30>)[]
+    & MinItems<1>
+    & MaxItems<10>
+    & UniqueItems;
+}
+```
+
+Validation order:
+
+1. **Array type check** — `Array.isArray(value)`
+2. **Collection constraints** — length, uniqueness
+3. **Element constraints** — for each item, validate type + constraints
+
+## Nested Objects in Arrays
+
+Arrays of objects are validated recursively:
+
+```ts
+import { Uuid, Min, Max, Int, MinItems, MaxItems } from '@tsgonest/types';
+
+interface OrderItem {
+  productId: string & Uuid;
+  quantity: number & Int & Min<1> & Max<1000>;
+  price: number & Min<0>;
+}
+
+interface CreateOrderDto {
+  items: OrderItem[] & MinItems<1> & MaxItems<100>;
+}
+```
+
+Generated validator:
+
+```js
+if (!Array.isArray(input.items)) throw new Error('items: expected array');
+if (input.items.length < 1) throw new Error('items: length must be >= 1');
+if (input.items.length > 100) throw new Error('items: length must be <= 100');
+
+for (let i = 0; i < input.items.length; i++) {
+  const item = input.items[i];
+  if (typeof item.productId !== 'string') {
+    throw new Error(`items[${i}].productId: expected string`);
+  }
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(item.productId)) {
+    throw new Error(`items[${i}].productId: expected uuid`);
+  }
+  // ... quantity, price validation
+}
+```
+
+Error paths include array indices: `items[0].productId`, `items[1].quantity`.
+
+## Tuples
+
+Tuples are validated element-by-element:
+
+```ts
+import { Min, Max, MinLength } from '@tsgonest/types';
+
+interface GeoDto {
+  // [latitude, longitude]
+  coordinates: [
+    number & Min<-90> & Max<90>,
+    number & Min<-180> & Max<180>
+  ];
+}
+
+interface RangeDto {
+  // [label, min, max]
+  range: [
+    string & MinLength<1>,
+    number,
+    number
+  ];
+}
+```
+
+Each tuple position is validated independently.
+
+## Literal Union Arrays
+
+Arrays of literal unions validate each element:
+
+```ts
+type Status = 'pending' | 'approved' | 'rejected';
+type Role = 'admin' | 'editor' | 'viewer';
+
+import { MinItems, UniqueItems } from '@tsgonest/types';
+
+interface FilterDto {
+  statuses: Status[];
+  roles: Role[] & MinItems<1> & UniqueItems;
+}
+```
+
+Generated validator for `roles`:
+
+```js
+if (!Array.isArray(input.roles)) throw new Error('roles: expected array');
+if (input.roles.length < 1) throw new Error('roles: length must be >= 1');
+
+const validRoles = new Set(['admin', 'editor', 'viewer']);
+const seen = new Set();
+for (let i = 0; i < input.roles.length; i++) {
+  const role = input.roles[i];
+  if (!validRoles.has(role)) {
+    throw new Error(`roles[${i}]: expected "admin" | "editor" | "viewer"`);
+  }
+  if (seen.has(role)) {
+    throw new Error('roles: array items must be unique');
+  }
+  seen.add(role);
+}
+```
+
+## Enum Arrays
+
+TypeScript enums work the same as literal unions:
+
+```ts
+enum Priority {
+  Low = 'low',
+  Medium = 'medium',
+  High = 'high',
+}
+
+import { MinItems } from '@tsgonest/types';
+
+interface TaskDto {
+  priorities: Priority[] & MinItems<1>;
+}
+```
+
+## Nested Arrays
+
+Arrays within arrays are validated recursively:
+
+```ts
+import { MinItems, MaxItems, Min, Max } from '@tsgonest/types';
+
+interface MatrixDto {
+  // 2D array: each row has 1-10 items, and there are 1-100 rows
+  matrix: (number & Min<0> & Max<100>)[][] & MinItems<1> & MaxItems<100>;
+}
+```
+
+Inner arrays can have their own constraints:
+
+```ts
+interface BatchDto {
+  // Each batch is 1-50 items, and there are 1-10 batches
+  batches: (string[] & MinItems<1> & MaxItems<50>)[] & MinItems<1> & MaxItems<10>;
+}
+```
+
+## Real-World Examples
+
+### Bulk Operations
+
+```ts
+import { Uuid, MinItems, MaxItems } from '@tsgonest/types';
+
+interface BulkDeleteDto {
+  ids: (string & Uuid)[]
+    & MinItems<{ value: 1; error: "Select at least one item to delete" }>
+    & MaxItems<{ value: 100; error: "Cannot delete more than 100 items at once" }};
+}
+```
+
+### Role Assignment
+
+```ts
+import { MinItems, UniqueItems } from '@tsgonest/types';
+
+type Role = 'admin' | 'editor' | 'viewer';
+
+interface AssignRolesDto {
+  userId: string;
+  roles: Role[]
+    & MinItems<{ value: 1; error: "Assign at least one role" }>
+    & UniqueItems<{ error: "Cannot assign duplicate roles" }>;
+}
+```
+
+### Multi-Language Content
+
+```ts
+import { MinLength, MaxLength, MinItems, MaxItems, Pattern } from '@tsgonest/types';
+
+interface Translation {
+  locale: string & Pattern<"^[a-z]{2}-[A-Z]{2}$">; // en-US, fr-FR
+  text: string & MinLength<1> & MaxLength<5000>;
+}
+
+interface MultilingualContentDto {
+  translations: Translation[]
+    & MinItems<{ value: 1; error: "At least one translation required" }>
+    & MaxItems<50>;
+}
+```
+
+### Polymorphic Array (Discriminated Union)
+
+```ts
+import { Min, Max, Format, MinItems } from '@tsgonest/types';
+
+interface TextBlock {
+  type: 'text';
+  content: string & MinLength<1>;
+}
+
+interface ImageBlock {
+  type: 'image';
+  url: string & Format<"url">;
+  alt: string;
+}
+
+interface VideoBlock {
+  type: 'video';
+  url: string & Format<"url">;
+  duration: number & Min<0>;
+}
+
+type ContentBlock = TextBlock | ImageBlock | VideoBlock;
+
+interface PageDto {
+  blocks: ContentBlock[] & MinItems<1> & MaxItems<100>;
+}
+```
+
+Generated validator uses O(1) discriminant switching on `type` field for each block.
+
+## Tips & Tricks
+
+<Accordion title="Use UniqueItems for permissions and roles">
+  ```ts
+  import { UniqueItems } from '@tsgonest/types';
+
+  // Prevents accidentally assigning duplicate permissions
+  permissions: string[] & UniqueItems;
+  roles: Role[] & UniqueItems;
+  ```
+</Accordion>
+
+<Accordion title="Constrain both min and max for safety">
+  ```ts
+  // ✅ Prevents abuse (empty array, huge array)
+  tags: string[] & MinItems<1> & MaxItems<20>;
+
+  // ⚠️ Can be empty, no upper limit
+  tags: string[];
+  ```
+</Accordion>
+
+<Accordion title="Validate element type via type alias">
+  ```ts
+  import { Email } from '@tsgonest/types';
+
+  type ValidatedEmail = string & Email;
+
+  interface InviteDto {
+    emails: ValidatedEmail[] & MinItems<1> & UniqueItems;
+  }
+  ```
+
+  Cleaner than inline `(string & Email)[]`.
+</Accordion>
+
+<Accordion title="Nested arrays need explicit constraints">
+  ```ts
+  // Inner array has no constraints — any length allowed
+  matrix: number[][];
+
+  // Inner arrays must be non-empty
+  matrix: (number[] & MinItems<1>)[];
+  ```
+</Accordion>
+
+## Next Steps
+
+- [Custom Validators](/guides/validation-custom) — Write custom validation functions
+- [JSDoc Validation](/guides/validation-jsdoc) — Zero-dependency approach
+- [Branded Type Validation](/guides/validation-branded-types) — Type-safe constraints

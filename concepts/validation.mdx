@@ -1,0 +1,668 @@
+---
+title: Type-Driven Validation
+description: How tsgonest generates runtime validators from TypeScript types
+---
+
+## Overview
+
+tsgonest generates **zero-overhead runtime validators** from your TypeScript types — no decorators, no schemas, no duplication. The validator functions are generated at **compile time** and inlined directly into your compiled JavaScript.
+
+### The Problem
+
+Typical TypeScript validation requires maintaining **two sources of truth**:
+
+```typescript
+// ❌ Duplication: Type + Zod schema
+interface CreateUserDto {
+  name: string;
+  email: string;
+  age: number;
+}
+
+const createUserSchema = z.object({
+  name: z.string().min(1).max(255),
+  email: z.string().email(),
+  age: z.number().int().min(0).max(150),
+});
+```
+
+### tsgonest's Solution
+
+**Write types once, validate at runtime:**
+
+```typescript
+// ✅ Single source of truth
+export interface CreateUserDto {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  name: string;
+  /** @format email */
+  email: string;
+  /**
+   * @minimum 0
+   * @maximum 150
+   */
+  age: number;
+}
+```
+
+At compile time, tsgonest generates a companion file:
+
+```javascript
+// dist/dto/user.dto.CreateUserDto.tsgonest.js
+export function validateCreateUserDto(input) {
+  const errors = [];
+  if (typeof input !== "object" || input === null) {
+    errors.push({ path: "$", message: "Expected object" });
+    return { success: false, errors };
+  }
+  if (typeof input.name !== "string") {
+    errors.push({ path: "$.name", message: "Expected string" });
+  } else if (input.name.length < 1) {
+    errors.push({ path: "$.name", message: "String too short (min: 1)" });
+  } else if (input.name.length > 255) {
+    errors.push({ path: "$.name", message: "String too long (max: 255)" });
+  }
+  // ... more checks ...
+  if (errors.length > 0) return { success: false, errors };
+  return { success: true, data: input };
+}
+```
+
+<Info>
+  **No runtime overhead**: The validator is generated once at compile time. At runtime, it's plain JavaScript function calls — no schema parsing, no reflection.
+</Info>
+
+## Type Walker Architecture
+
+The validation pipeline starts with the **Type Walker** — a component that extracts structured metadata from TypeScript types.
+
+### AST → Metadata Conversion
+
+```go
+// internal/analyzer/type_walker.go:133
+func (w *TypeWalker) WalkNamedType(name string, t *shimchecker.Type) metadata.Metadata
+```
+
+**Flow:**
+
+1. **Parse TypeScript** → AST (abstract syntax tree)
+2. **Resolve types** → tsgo checker API
+3. **Walk type tree** → normalize into `Metadata` struct
+4. **Register named types** → build type registry
+5. **Generate validator** → emit JavaScript functions
+
+### Metadata Schema
+
+The `Metadata` struct is tsgonest's internal representation of a TypeScript type:
+
+```go
+// internal/metadata/metadata.go:7
+type Metadata struct {
+    Kind       Kind         // atomic, object, array, union, etc.
+    Nullable   bool         // includes null?
+    Optional   bool         // includes undefined?
+    Atomic     string       // "string", "number", "boolean"
+    Properties []Property   // for objects
+    ElementType *Metadata   // for arrays
+    UnionMembers []Metadata // for unions
+    Constraints *Constraints // validation rules
+    // ... more fields ...
+}
+```
+
+### Constraint Sources
+
+tsgonest supports **two ways** to declare validation constraints:
+
+#### 1. JSDoc Tags (Zero Dependencies)
+
+```typescript
+export interface Product {
+  /** @format uuid */
+  id: string;
+  /**
+   * @minimum 0
+   * @exclusiveMinimum true
+   */
+  price: number;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  description: string;
+}
+```
+
+**Supported tags** (from JSON Schema):
+- **String**: `@minLength`, `@maxLength`, `@pattern`, `@format`, `@startsWith`, `@endsWith`, `@includes`
+- **Number**: `@minimum`, `@maximum`, `@exclusiveMinimum`, `@exclusiveMaximum`, `@multipleOf`, `@numericType`
+- **Array**: `@minItems`, `@maxItems`, `@uniqueItems`
+- **Object**: `@strictness` (strict, strip, passthrough)
+
+#### 2. Branded Types (Type-Safe)
+
+```typescript
+import { tags } from '@tsgonest/types';
+
+export interface Product {
+  id: string & tags.Uuid;
+  price: number & tags.Positive & tags.Int;
+  description: string & tags.MinLength<1> & tags.MaxLength<500>;
+}
+```
+
+**Why branded types?**
+- **Type safety**: IDE autocomplete for constraint names
+- **Composition**: Chain multiple constraints with `&`
+- **Zero runtime cost**: Phantom types erased at compile time
+
+<Tip>
+  **Mix and match**: You can use JSDoc tags and branded types in the same project. Branded types take precedence when both are present.
+</Tip>
+
+### Phantom Property Detection
+
+Branded types work via **phantom properties** — properties that exist only at the type level:
+
+```typescript
+// @tsgonest/types/src/tags.ts
+export interface MinLength<N extends number> {
+  readonly __tsgonest_minLength: N;
+}
+```
+
+The type walker detects these properties during intersection analysis:
+
+```go
+// internal/analyzer/type_walker.go (walkIntersection)
+if strings.HasPrefix(propName, "__tsgonest_") {
+    // Extract constraint from phantom property
+    constraints.SetBranded(c, propName, propType)
+}
+```
+
+**Typia compatibility**: tsgonest also recognizes `"typia.tag"` properties for migration from [typia](https://typia.io/).
+
+## Validator Generation
+
+### Generated Functions
+
+Each type gets **three validator functions**:
+
+#### 1. `is<Type>(input)` — Boolean Guard
+
+```typescript
+export function isCreateUserDto(input: unknown): input is CreateUserDto {
+  if (typeof input !== "object" || input === null) return false;
+  if (typeof input.name !== "string") return false;
+  if (input.name.length < 1 || input.name.length > 255) return false;
+  // ... more checks ...
+  return true;
+}
+```
+
+**Zero allocations** — pure boolean logic, returns `true`/`false`.
+
+#### 2. `validate<Type>(input)` — Result Object
+
+```typescript
+export function validateCreateUserDto(input: unknown): 
+  | { success: true; data: CreateUserDto }
+  | { success: false; errors: Array<{ path: string; message: string }> } {
+  const errors = [];
+  // ... collect all validation errors ...
+  if (errors.length > 0) return { success: false, errors };
+  return { success: true, data: input as CreateUserDto };
+}
+```
+
+**Collects all errors** — validates entire input before returning.
+
+#### 3. `assert<Type>(input)` — Throw on Error
+
+```typescript
+export function assertCreateUserDto(input: unknown): CreateUserDto {
+  if (typeof input !== "object" || input === null) {
+    throw new Error("Expected object");
+  }
+  if (typeof input.name !== "string") {
+    throw new Error("$.name: Expected string");
+  }
+  // ... throw on first error ...
+  return input as CreateUserDto;
+}
+```
+
+**Fail-fast** — throws on first error, returns typed value.
+
+### Code Generation Strategy
+
+**Inline expansion** (default):
+
+```javascript
+// Nested object validation expands inline
+if (typeof input.address !== "object" || input.address === null) {
+  errors.push({ path: "$.address", message: "Expected object" });
+} else {
+  if (typeof input.address.street !== "string") {
+    errors.push({ path: "$.address.street", message: "Expected string" });
+  }
+}
+```
+
+**Function calls** (for recursive types):
+
+```javascript
+// Recursive types call themselves
+export function validateMessage(input) {
+  // ...
+  if (Array.isArray(input.replies)) {
+    for (let i = 0; i < input.replies.length; i++) {
+      const __vr = validateMessage(input.replies[i]); // recursive call
+      if (!__vr.success) {
+        errors.push(...__vr.errors.map(e => ({
+          path: `$.replies[${i}]${e.path.slice(1)}`,
+          message: e.message
+        })));
+      }
+    }
+  }
+}
+```
+
+<Note>
+  The type walker tracks visited types to **detect recursion** and emit function calls instead of infinite inline expansion.
+</Note>
+
+## Constraint Implementation
+
+### String Validation
+
+```javascript
+// @minLength 1 @maxLength 255
+if (typeof input.name !== "string") {
+  errors.push({ path: "$.name", message: "Expected string" });
+} else if (input.name.length < 1) {
+  errors.push({ path: "$.name", message: "String too short (min: 1)" });
+} else if (input.name.length > 255) {
+  errors.push({ path: "$.name", message: "String too long (max: 255)" });
+}
+```
+
+### Format Validation
+
+**Built-in formats** (from JSON Schema):
+- `email` — RFC 5322 pattern
+- `uuid` — RFC 4122 pattern
+- `uri`, `url` — RFC 3986
+- `date`, `time`, `date-time` — ISO 8601
+- `ipv4`, `ipv6`
+
+```javascript
+// @format email
+if (typeof input.email !== "string") {
+  errors.push({ path: "$.email", message: "Expected string" });
+} else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.email)) {
+  errors.push({ path: "$.email", message: "Invalid email format" });
+}
+```
+
+**Custom format validators**:
+
+```typescript
+// src/utils/validators.ts
+export function validateCreditCard(value: string): boolean {
+  // Luhn algorithm
+  return /^[0-9]{13,19}$/.test(value) && luhnCheck(value);
+}
+
+// src/dto/payment.dto.ts
+export interface PaymentDto {
+  /** @format creditCard */
+  cardNumber: string;
+}
+```
+
+Configure the validator import:
+
+```typescript
+// tsgonest.config.ts
+export default defineConfig({
+  customFormats: {
+    creditCard: 'src/utils/validators.ts#validateCreditCard',
+  },
+});
+```
+
+Generated companion:
+
+```javascript
+import { validateCreditCard } from '../utils/validators.js';
+
+export function validatePaymentDto(input) {
+  // ...
+  if (!validateCreditCard(input.cardNumber)) {
+    errors.push({ path: "$.cardNumber", message: "Invalid creditCard format" });
+  }
+}
+```
+
+### Numeric Validation
+
+```javascript
+// @minimum 0 @maximum 150
+if (typeof input.age !== "number" || Number.isNaN(input.age)) {
+  errors.push({ path: "$.age", message: "Expected number" });
+} else if (input.age < 0) {
+  errors.push({ path: "$.age", message: "Number too small (min: 0)" });
+} else if (input.age > 150) {
+  errors.push({ path: "$.age", message: "Number too large (max: 150)" });
+}
+```
+
+**Integer enforcement**:
+
+```javascript
+// @numericType int
+if (!Number.isInteger(input.quantity)) {
+  errors.push({ path: "$.quantity", message: "Expected integer" });
+}
+```
+
+### Union Validation
+
+**Simple unions** (try each branch):
+
+```typescript
+type Status = "active" | "inactive" | "pending";
+```
+
+```javascript
+if (input !== "active" && input !== "inactive" && input !== "pending") {
+  errors.push({ path: "$.status", message: "Expected 'active' | 'inactive' | 'pending'" });
+}
+```
+
+**Discriminated unions** (optimized):
+
+```typescript
+type Shape =
+  | { kind: "circle"; radius: number }
+  | { kind: "rectangle"; width: number; height: number };
+```
+
+```javascript
+if (typeof input !== "object" || input === null) {
+  errors.push({ path: "$", message: "Expected object" });
+} else {
+  switch (input.kind) {
+    case "circle":
+      if (typeof input.radius !== "number") {
+        errors.push({ path: "$.radius", message: "Expected number" });
+      }
+      break;
+    case "rectangle":
+      if (typeof input.width !== "number") {
+        errors.push({ path: "$.width", message: "Expected number" });
+      }
+      if (typeof input.height !== "number") {
+        errors.push({ path: "$.height", message: "Expected number" });
+      }
+      break;
+    default:
+      errors.push({ path: "$.kind", message: "Invalid discriminant value" });
+  }
+}
+```
+
+<Tip>
+  **Discriminant detection**: The type walker automatically identifies discriminated unions when all members share a common property with unique literal values.
+</Tip>
+
+## Coercion
+
+NestJS query parameters and path parameters arrive as **strings** — tsgonest can automatically coerce them to declared types.
+
+### Query/Param Coercion
+
+```typescript
+export interface ListQuery {
+  page?: number;    // "42" → 42
+  limit?: number;   // "10" → 10
+  active?: boolean; // "true" → true
+}
+```
+
+Enable coercion via JSDoc:
+
+```typescript
+export interface ListQuery {
+  /**
+   * @coerce true
+   * @minimum 1
+   */
+  page?: number;
+}
+```
+
+Generated validator:
+
+```javascript
+// Coerce string to number BEFORE type check
+if (typeof input.page === "string" && input.page.length > 0) {
+  const _n = +input.page;
+  if (!Number.isNaN(_n) && input.page.trim() === input.page && !/^0[xXoObB]/.test(input.page)) {
+    input.page = _n;
+  }
+}
+// Then validate as number
+if (typeof input.page !== "number" || Number.isNaN(input.page)) {
+  errors.push({ path: "$.page", message: "Expected number" });
+}
+```
+
+**Coercion rules**:
+- `string → number`: Plain decimals only (rejects `""`, `"0xff"`, `"0o77"`)
+- `string → boolean`: `"true"` / `"false"` / `"1"` / `"0"` only
+- `string → Date`: ISO 8601 via `new Date(value)`
+
+<Warning>
+  **Automatic coercion**: In NestJS controllers, `@Query()` and `@Param()` DTOs have coercion **automatically enabled** by tsgonest. You don't need to add `@coerce` JSDoc tags.
+</Warning>
+
+## Transforms
+
+Apply **string transformations** before validation:
+
+```typescript
+export interface SearchDto {
+  /**
+   * @transform trim
+   * @transform toLowerCase
+   * @minLength 1
+   */
+  query: string;
+}
+```
+
+Generated validator:
+
+```javascript
+// Transform BEFORE constraint checks
+if (typeof input.query === "string") {
+  input.query = input.query.trim();
+}
+if (typeof input.query === "string") {
+  input.query = input.query.toLowerCase();
+}
+// Then validate
+if (typeof input.query !== "string") {
+  errors.push({ path: "$.query", message: "Expected string" });
+} else if (input.query.length < 1) {
+  errors.push({ path: "$.query", message: "String too short (min: 1)" });
+}
+```
+
+**Available transforms**:
+- `trim` — remove leading/trailing whitespace
+- `toLowerCase` — convert to lowercase
+- `toUpperCase` — convert to uppercase
+
+## Strictness Modes
+
+Control how unknown properties are handled:
+
+### Strict Mode (Default)
+
+```typescript
+/** @strictness strict */
+export interface UserDto {
+  name: string;
+  email: string;
+}
+```
+
+```javascript
+// Unknown properties cause validation failure
+const input = { name: "Alice", email: "alice@example.com", extra: 123 };
+const result = validateUserDto(input);
+// result.success === false
+// result.errors === [{ path: "$.extra", message: "Unknown property" }]
+```
+
+### Strip Mode
+
+```typescript
+/** @strictness strip */
+export interface UserDto {
+  name: string;
+  email: string;
+}
+```
+
+```javascript
+// Unknown properties silently removed
+const input = { name: "Alice", email: "alice@example.com", extra: 123 };
+const result = validateUserDto(input);
+// result.success === true
+// result.data === { name: "Alice", email: "alice@example.com" }
+```
+
+### Passthrough Mode
+
+```typescript
+/** @strictness passthrough */
+export interface UserDto {
+  name: string;
+  email: string;
+}
+```
+
+```javascript
+// Unknown properties preserved
+const input = { name: "Alice", email: "alice@example.com", extra: 123 };
+const result = validateUserDto(input);
+// result.success === true
+// result.data === { name: "Alice", email: "alice@example.com", extra: 123 }
+```
+
+## NestJS Integration
+
+In NestJS controllers, validation happens **automatically** via compile-time rewriting:
+
+```typescript
+// Before compilation
+@Post()
+async create(@Body() body: CreateUserDto): Promise<UserResponse> {
+  return this.usersService.create(body);
+}
+
+// After compilation
+import { validateCreateUserDto } from './dto.CreateUserDto.tsgonest.js';
+import { TsgonestValidationError } from '@tsgonest/runtime';
+
+async create(body) {
+  const __vr = validateCreateUserDto(body);
+  if (!__vr.success) {
+    throw new TsgonestValidationError(__vr.errors);
+  }
+  body = __vr.data;
+  return this.usersService.create(body);
+}
+```
+
+**No pipes or interceptors** — validation is injected at the call site.
+
+<Info>
+  See [Controller Rewriting](/concepts/compilation#controller-rewriting) for how tsgonest transforms `@Body()`, `@Query()`, and `@Param()` decorators.
+</Info>
+
+## Performance
+
+### Benchmarks
+
+Compared to popular validation libraries:
+
+| Library | Operations/sec | Notes |
+|---------|----------------|-------|
+| **tsgonest** | ~8,000,000 | Generated code, zero overhead |
+| Zod | ~150,000 | Schema parsing overhead |
+| Joi | ~280,000 | Schema compilation |
+| class-validator | ~45,000 | Reflection + decorators |
+
+**Why so fast?**
+
+1. **No schema parsing** — validator is pre-compiled JavaScript
+2. **Inline checks** — no function call overhead for simple types
+3. **Optimized unions** — discriminant-based switch for tagged unions
+4. **Zero allocations** — `is<Type>()` functions don't create error objects
+
+### Code Size
+
+Generated validators are **compact**:
+
+- **Simple DTO** (3-5 properties): ~800 bytes (minified)
+- **Complex DTO** (10+ properties, nested): ~2-3 KB
+- **Recursive type**: +200 bytes for function wrapper
+
+**Tree-shaking**: Unused validator functions are eliminated by bundlers.
+
+## Limitations
+
+### Unsupported Type Features
+
+1. **Conditional types** — Cannot statically analyze `T extends U ? X : Y`
+2. **Mapped types** — `{ [K in keyof T]: ... }` requires runtime type info
+3. **Template literal types** — Only basic patterns supported (e.g., `` `prefix_${string}` ``)
+4. **Index signatures with computed keys** — `{ [K in SomeUnion]: ... }` not supported
+
+For these cases, use manual validation or cast to a simpler type.
+
+### Maximum Type Complexity
+
+The type walker has safety limits:
+
+- **Max depth**: 20 levels of nesting
+- **Max types**: 500 types per walker session
+
+These prevent infinite recursion and excessive memory usage on pathological types (e.g., `TypedOmit<Prisma.Entity, 'x'>`).
+
+## Related Topics
+
+<CardGroup cols={2}>
+  <Card title="Compilation" icon="gears" href="/concepts/compilation">
+    How tsgonest compiles TypeScript
+  </Card>
+  <Card title="Serialization" icon="bolt" href="/concepts/serialization">
+    Fast JSON output generation
+  </Card>
+  <Card title="OpenAPI" icon="book" href="/concepts/openapi">
+    Schema generation from types
+  </Card>
+  <Card title="Branded Types" icon="tag" href="/guides/validation-branded-types">
+    Type-safe validation constraints
+  </Card>
+</CardGroup>

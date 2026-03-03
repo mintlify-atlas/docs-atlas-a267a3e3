@@ -1,0 +1,494 @@
+---
+title: tsgonest dev
+description: Watch mode with automatic rebuild and hot reload
+---
+
+## Usage
+
+```bash
+tsgonest dev [flags] [-- <node args>]
+```
+
+Runs your NestJS application in watch mode: builds the project, starts the Node.js process, watches for file changes, and automatically rebuilds and restarts on changes. Replaces `nest start --watch`.
+
+## Flags
+
+<ParamField path="--project" flag="-p" type="string" default="tsconfig.json">
+  Path to tsconfig.json
+  
+  ```bash
+  tsgonest dev --project tsconfig.build.json
+  tsgonest dev -p apps/api/tsconfig.json
+  ```
+</ParamField>
+
+<ParamField path="--config" type="string">
+  Path to tsgonest config file (.ts or .json)
+  
+  ```bash
+  tsgonest dev --config tsgonest.config.ts
+  ```
+</ParamField>
+
+<ParamField path="--entry" type="string">
+  Entry point file (default: auto-detect from dist)
+  
+  Auto-detection tries:
+  1. `dist/main.js` (NestJS convention)
+  2. `dist/index.js`
+  
+  You can override with a relative or absolute path:
+  
+  ```bash
+  tsgonest dev --entry dist/server.js
+  tsgonest dev --entry main  # Resolves to dist/main.js
+  ```
+  
+  Or configure in `tsgonest.config.ts`:
+  
+  ```typescript
+  export default defineConfig({
+    entryFile: "server",  // Resolves to dist/src/server.js
+  });
+  ```
+</ParamField>
+
+<ParamField path="--exec" type="string">
+  Custom command to run instead of Node.js
+  
+  ```bash
+  tsgonest dev --exec "bun run dist/main.js"
+  tsgonest dev --exec "deno run --allow-all dist/main.js"
+  ```
+</ParamField>
+
+<ParamField path="--debug" type="string">
+  Enable Node.js debugging
+  
+  Accepts:
+  - `--debug` or `--debug=true`: Enables `--inspect` on default port 9229
+  - `--debug=9230`: Enables `--inspect=9230`
+  - `--debug=0.0.0.0:9229`: Enables `--inspect=0.0.0.0:9229`
+  
+  ```bash
+  tsgonest dev --debug
+  tsgonest dev --debug=9230
+  tsgonest dev --debug=0.0.0.0:9229
+  ```
+  
+  Attach your debugger to the printed port:
+  
+  ```bash Terminal
+  $ tsgonest dev --debug
+  starting: node --enable-source-maps --inspect dist/main.js
+  Debugger listening on ws://127.0.0.1:9229/...
+  ```
+</ParamField>
+
+<ParamField path="--env-file" type="string">
+  Path to .env file to load
+  
+  Passes `--env-file=<path>` to Node.js (requires Node.js 20.6+).
+  
+  ```bash
+  tsgonest dev --env-file .env.local
+  tsgonest dev --env-file config/.env.dev
+  ```
+  
+  <Note>
+    Node.js loads the env file before your application starts, making variables available via `process.env`.
+  </Note>
+</ParamField>
+
+<ParamField path="--preserveWatchOutput" type="boolean" default={false}>
+  Don't clear console between rebuilds
+  
+  By default, tsgonest clears the terminal on each rebuild (like `tsc --watch`). Use this flag to preserve output.
+  
+  ```bash
+  tsgonest dev --preserveWatchOutput
+  ```
+</ParamField>
+
+<ParamField path="--no-source-maps" type="boolean" default={false}>
+  Disable `--enable-source-maps`
+  
+  By default, tsgonest passes `--enable-source-maps` to Node.js for better stack traces. Disable with this flag.
+  
+  ```bash
+  tsgonest dev --no-source-maps
+  ```
+</ParamField>
+
+## Passthrough Arguments
+
+Arguments after `--` are passed directly to Node.js:
+
+```bash
+tsgonest dev -- --max-old-space-size=4096
+tsgonest dev --debug -- --max-old-space-size=8192 --trace-warnings
+```
+
+Example with environment variables:
+
+```bash
+tsgonest dev -- --max-old-space-size=4096
+# Equivalent to:
+node --enable-source-maps --max-old-space-size=4096 dist/main.js
+```
+
+## Configuration
+
+### Config File Options
+
+The dev command respects these settings from `tsgonest.config.ts`:
+
+```typescript tsgonest.config.ts
+import { defineConfig } from "tsgonest";
+
+export default defineConfig({
+  // Entry point (without extension)
+  entryFile: "server",
+  
+  // Source root directory
+  sourceRoot: "src",
+  
+  // Clean output directory on initial build
+  deleteOutDir: true,
+  
+  // Enable manual restart with "rs" command
+  manualRestart: true,
+  
+  // Other build settings...
+  controllers: {
+    include: ["src/**/*.controller.ts"],
+  },
+  transforms: {
+    validation: true,
+    serialization: true,
+  },
+});
+```
+
+<ParamField path="entryFile" type="string" default="main">
+  Entry point name without extension or path
+  
+  Resolved relative to `dist/<sourceRoot>/`:
+  - `"main"` → `dist/src/main.js`
+  - `"server"` → `dist/src/server.js`
+</ParamField>
+
+<ParamField path="sourceRoot" type="string" default="src">
+  Source root directory
+  
+  Used for entry file resolution and watch path detection.
+</ParamField>
+
+<ParamField path="deleteOutDir" type="boolean" default={false}>
+  Delete output directory before initial build
+  
+  Acts like `--clean` for the first build only. Subsequent rebuilds are incremental.
+</ParamField>
+
+<ParamField path="manualRestart" type="boolean" default={false}>
+  Enable manual restart with "rs" command
+  
+  When enabled, typing `rs` and pressing Enter in the terminal triggers a rebuild and restart.
+</ParamField>
+
+## Examples
+
+### Basic Dev Mode
+
+```bash
+tsgonest dev
+```
+
+Starts with auto-detected entry point and default settings.
+
+### Debug Mode
+
+```bash
+tsgonest dev --debug
+```
+
+Starts with Node.js debugger on port 9229. Attach with Chrome DevTools or VS Code.
+
+### Custom Port Debugging
+
+```bash
+tsgonest dev --debug=9230
+```
+
+### Load Environment Variables
+
+```bash
+tsgonest dev --env-file .env.local
+```
+
+### Increase Memory Limit
+
+```bash
+tsgonest dev -- --max-old-space-size=8192
+```
+
+### Custom Entry Point
+
+```bash
+tsgonest dev --entry dist/apps/api/main.js
+```
+
+### Keep Build Output
+
+```bash
+tsgonest dev --preserveWatchOutput
+```
+
+Useful when debugging build issues.
+
+### Custom Runtime
+
+```bash
+tsgonest dev --exec "bun run dist/main.js"
+```
+
+Use Bun instead of Node.js.
+
+## Watch Behavior
+
+### Watched Files
+
+By default, watches all `.ts`, `.tsx`, `.mts`, `.cts` files in:
+
+- `<sourceRoot>/` (default: `src/`)
+- Or current directory if source root doesn't exist
+
+### Ignored Files
+
+- `node_modules/`
+- `dist/`
+- `.git/`
+- Hidden files (`.dotfiles`)
+
+### Debouncing
+
+Changes are debounced with a 100ms delay to batch rapid file saves.
+
+## Incremental Rebuilds
+
+tsgonest dev uses in-memory incremental compilation:
+
+- First build is full compilation
+- Subsequent rebuilds only process changed files
+- Incremental state is held in memory (not written to `.tsbuildinfo` on every rebuild)
+- Much faster than running `tsgonest build` repeatedly
+
+```bash Terminal
+$ tsgonest dev
+performing initial build...
+incremental build enabled
+emitted 10 file(s)
+initial build succeeded
+starting: node --enable-source-maps dist/main.js
+[Nest] 12345  - 01/01/2024, 12:00:00 PM     LOG [NestFactory] Starting Nest application...
+watching for changes...
+
+# After editing a file:
+detected 1 change(s), rebuilding...
+emitted 1 file(s)
+restarting...
+[Nest] 12346  - 01/01/2024, 12:00:05 PM     LOG [NestFactory] Starting Nest application...
+```
+
+## Manual Restart
+
+Enable manual restart in config:
+
+```typescript tsgonest.config.ts
+export default defineConfig({
+  manualRestart: true,
+  // ...
+});
+```
+
+Then type `rs` and press Enter to trigger a rebuild:
+
+```bash Terminal
+$ tsgonest dev
+watching for changes...
+To restart at any time, enter "rs".
+rs
+
+manual restart triggered...
+emitted 10 file(s)
+restarting...
+To restart at any time, enter "rs".
+```
+
+## Process Management
+
+### Graceful Shutdown
+
+Press `Ctrl+C` to stop both the watcher and the child process:
+
+```bash Terminal
+^C
+shutting down...
+```
+
+### Signal Handling
+
+tsgonest dev forwards signals to the child process:
+
+- `SIGINT` (Ctrl+C) → graceful shutdown
+- `SIGTERM` → graceful shutdown
+- `SIGHUP` → graceful shutdown
+
+### Child Process Cleanup
+
+The child Node.js process is automatically cleaned up:
+
+- On parent exit
+- On rebuild (old process is killed before starting new one)
+- On panic/crash (defer cleanup ensures no orphaned processes)
+
+## Exit Codes
+
+<ResponseField name="0" type="Success">
+  Dev mode exited normally (user pressed Ctrl+C)
+</ResponseField>
+
+<ResponseField name="1" type="Error">
+  Initial build failed or configuration error
+</ResponseField>
+
+## Debugging
+
+### Attach Chrome DevTools
+
+1. Start with `--debug`:
+   ```bash
+   tsgonest dev --debug
+   ```
+
+2. Open Chrome and navigate to:
+   ```
+   chrome://inspect
+   ```
+
+3. Click "inspect" under Remote Target
+
+### Attach VS Code Debugger
+
+Add to `.vscode/launch.json`:
+
+```json .vscode/launch.json
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "node",
+      "request": "attach",
+      "name": "Attach to tsgonest dev",
+      "port": 9229,
+      "restart": true,
+      "skipFiles": ["<node_internals>/**"]
+    }
+  ]
+}
+```
+
+Then:
+1. Run `tsgonest dev --debug` in terminal
+2. Press `F5` in VS Code to attach
+
+### Source Maps
+
+By default, `--enable-source-maps` is passed to Node.js, so stack traces show TypeScript line numbers:
+
+```bash Terminal
+Error: User not found
+    at UserService.findOne (src/user.service.ts:25:11)
+    at UserController.getUser (src/user.controller.ts:42:24)
+```
+
+Disable with `--no-source-maps` if needed.
+
+## Comparison with nest CLI
+
+| Feature | `nest start --watch` | `tsgonest dev` |
+|---------|---------------------|----------------|
+| Hot reload | ✅ | ✅ |
+| TypeScript compilation | tsc or swc | tsgo (native Go) |
+| Companion generation | ❌ | ✅ |
+| OpenAPI generation | ❌ | ✅ (automatic) |
+| In-memory incremental | ❌ | ✅ |
+| Manual restart (rs) | ✅ | ✅ (opt-in) |
+| Debug mode | ✅ | ✅ |
+| Source maps | ❌ (manual) | ✅ (automatic) |
+| Custom exec | ❌ | ✅ |
+
+## Troubleshooting
+
+### "node: command not found"
+
+Install Node.js or ensure it's in your PATH:
+
+```bash
+node --version
+```
+
+### Entry point not found
+
+Verify the entry file exists:
+
+```bash
+ls -la dist/main.js
+```
+
+Or specify explicitly:
+
+```bash
+tsgonest dev --entry dist/main.js
+```
+
+### Process doesn't restart on changes
+
+Check that:
+
+1. Files are in the watched directory (default: `src/`)
+2. File extensions are `.ts`, `.tsx`, `.mts`, or `.cts`
+3. No filesystem errors in terminal output
+
+### Debug port already in use
+
+Change the debug port:
+
+```bash
+tsgonest dev --debug=9230
+```
+
+### High memory usage
+
+Limit Node.js heap:
+
+```bash
+tsgonest dev -- --max-old-space-size=2048
+```
+
+## See Also
+
+<CardGroup cols={2}>
+  <Card title="Build Command" icon="hammer" href="/cli/build">
+    One-time build without watch
+  </Card>
+  <Card title="Configuration" icon="gear" href="/config/overview">
+    Configure dev mode behavior
+  </Card>
+  <Card title="Debugging" icon="bug" href="/cli/dev#debugging">
+    Advanced debugging techniques
+  </Card>
+  <Card title="Performance" icon="gauge" href="/concepts/compilation#performance-characteristics">
+    Optimize build times
+  </Card>
+</CardGroup>

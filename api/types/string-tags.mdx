@@ -1,0 +1,547 @@
+---
+title: 'String Tags'
+description: 'Validation constraints for string types'
+---
+
+## Overview
+
+String tags provide validation constraints for string types including format validation, length limits, pattern matching, case validation, and string transformations.
+
+## Import
+
+```typescript
+import { tags } from '@tsgonest/types';
+```
+
+## Format Validation
+
+### Format
+
+Validate a string matches a specific format.
+
+```typescript
+tags.Format<FormatValue | { type: FormatValue; error?: string }>
+```
+
+<ParamField path="type" type="FormatValue" required>
+  Format to validate against. Supported values:
+  
+  - **Email**: `email`, `idn-email`
+  - **URL/URI**: `url`, `uri`, `uri-reference`, `uri-template`, `iri`, `iri-reference`
+  - **Identifiers**: `uuid`, `nanoid`, `cuid`, `cuid2`, `ulid`
+  - **IP Addresses**: `ipv4`, `ipv6`, `cidrv4`, `cidrv6`
+  - **Hostnames**: `hostname`, `idn-hostname`
+  - **Date/Time**: `date-time`, `date`, `time`, `duration`
+  - **JSON**: `json-pointer`, `relative-json-pointer`
+  - **Encoding**: `byte` (base64), `base64url`, `hex`, `mac`
+  - **Auth**: `jwt`, `password`
+  - **Other**: `regex`, `emoji`
+</ParamField>
+
+<ParamField path="error" type="string">
+  Custom error message for validation failures
+</ParamField>
+
+#### Examples
+
+```typescript
+import { tags } from '@tsgonest/types';
+
+interface UserDto {
+  // Simple format
+  email: string & tags.Format<'email'>;
+  website: string & tags.Format<'url'>;
+  id: string & tags.Format<'uuid'>;
+  
+  // With custom error
+  email: string & tags.Format<{
+    type: 'email';
+    error: 'Must be a valid email address';
+  }>;
+}
+```
+
+### Format Aliases
+
+Convenience aliases for common formats:
+
+```typescript
+// Email
+tags.Email         // Same as Format<'email'>
+
+// Identifiers
+tags.Uuid          // Same as Format<'uuid'>
+tags.Ulid          // Same as Format<'ulid'>
+tags.Cuid          // Same as Format<'cuid'>
+tags.Cuid2         // Same as Format<'cuid2'>
+tags.NanoId        // Same as Format<'nanoid'>
+
+// Network
+tags.Url           // Same as Format<'url'>
+tags.Uri           // Same as Format<'uri'>
+tags.IPv4          // Same as Format<'ipv4'>
+tags.IPv6          // Same as Format<'ipv6'>
+
+// Date/Time
+tags.DateTime      // Same as Format<'date-time'>
+tags.DateOnly      // Same as Format<'date'>
+tags.Time          // Same as Format<'time'>
+tags.Duration      // Same as Format<'duration'>
+
+// Auth
+tags.Jwt           // Same as Format<'jwt'>
+```
+
+#### Examples
+
+```typescript
+import { tags } from '@tsgonest/types';
+
+interface UserDto {
+  email: string & tags.Email;
+  id: string & tags.Uuid;
+  website: string & tags.Url;
+  ip: string & tags.IPv4;
+  createdAt: string & tags.DateTime;
+  token: string & tags.Jwt;
+}
+```
+
+## Length Constraints
+
+### MinLength
+
+Minimum string length (inclusive).
+
+```typescript
+tags.MinLength<N | { value: N; error?: string }>
+```
+
+<ParamField path="value" type="number" required>
+  Minimum length (inclusive)
+</ParamField>
+
+<ParamField path="error" type="string">
+  Custom error message
+</ParamField>
+
+#### Examples
+
+```typescript
+import { tags } from '@tsgonest/types';
+
+interface Example {
+  // Non-empty string
+  name: string & tags.MinLength<1>;
+  
+  // At least 8 characters
+  password: string & tags.MinLength<8>;
+  
+  // With custom error
+  username: string & tags.MinLength<{
+    value: 3;
+    error: 'Username must be at least 3 characters';
+  }>;
+}
+```
+
+### MaxLength
+
+Maximum string length (inclusive).
+
+```typescript
+tags.MaxLength<N | { value: N; error?: string }>
+```
+
+<ParamField path="value" type="number" required>
+  Maximum length (inclusive)
+</ParamField>
+
+<ParamField path="error" type="string">
+  Custom error message
+</ParamField>
+
+#### Examples
+
+```typescript
+import { tags } from '@tsgonest/types';
+
+interface Example {
+  // At most 100 characters
+  title: string & tags.MaxLength<100>;
+  
+  // With custom error
+  bio: string & tags.MaxLength<{
+    value: 500;
+    error: 'Bio cannot exceed 500 characters';
+  }>;
+}
+```
+
+### Length
+
+Exact string length (sets both MinLength and MaxLength).
+
+```typescript
+tags.Length<N | { value: N; error?: string }>
+```
+
+<ParamField path="value" type="number" required>
+  Exact length required
+</ParamField>
+
+<ParamField path="error" type="string">
+  Custom error message (applied to both min and max)
+</ParamField>
+
+#### Examples
+
+```typescript
+import { tags } from '@tsgonest/types';
+
+interface Example {
+  // Exactly 2 characters
+  countryCode: string & tags.Length<2>;
+  
+  // With custom error
+  pin: string & tags.Length<{
+    value: 4;
+    error: 'PIN must be exactly 4 digits';
+  }>;
+}
+```
+
+### Between
+
+String length range (sets both MinLength and MaxLength).
+
+```typescript
+tags.Between<{ min: number; max: number; error?: string }>
+```
+
+<ParamField path="min" type="number" required>
+  Minimum length (inclusive)
+</ParamField>
+
+<ParamField path="max" type="number" required>
+  Maximum length (inclusive)
+</ParamField>
+
+<ParamField path="error" type="string">
+  Custom error message (applied to both min and max)
+</ParamField>
+
+#### Examples
+
+```typescript
+import { tags } from '@tsgonest/types';
+
+interface Example {
+  // Between 3 and 20 characters
+  username: string & tags.Between<{ min: 3; max: 20 }>;
+  
+  // With custom error
+  title: string & tags.Between<{
+    min: 1;
+    max: 100;
+    error: 'Title must be 1-100 characters';
+  }>;
+}
+```
+
+## Pattern Matching
+
+### Pattern
+
+Validate string matches a regular expression.
+
+```typescript
+tags.Pattern<P | { value: P; error?: string }>
+```
+
+<ParamField path="value" type="string" required>
+  Regular expression pattern (without delimiters)
+</ParamField>
+
+<ParamField path="error" type="string">
+  Custom error message
+</ParamField>
+
+#### Examples
+
+```typescript
+import { tags } from '@tsgonest/types';
+
+interface Example {
+  // Lowercase letters only
+  slug: string & tags.Pattern<'^[a-z]+$'>;
+  
+  // With custom error
+  phone: string & tags.Pattern<{
+    value: '^\\+?[1-9]\\d{1,14}$';
+    error: 'Must be a valid phone number';
+  }>;
+}
+```
+
+### StartsWith
+
+String must start with a prefix.
+
+```typescript
+tags.StartsWith<S | { value: S; error?: string }>
+```
+
+<ParamField path="value" type="string" required>
+  Required prefix
+</ParamField>
+
+<ParamField path="error" type="string">
+  Custom error message
+</ParamField>
+
+#### Examples
+
+```typescript
+import { tags } from '@tsgonest/types';
+
+interface Example {
+  // Must start with https://
+  secureUrl: string & tags.StartsWith<'https://'>;
+  
+  // With custom error
+  productCode: string & tags.StartsWith<{
+    value: 'PROD-';
+    error: 'Product code must start with PROD-';
+  }>;
+}
+```
+
+### EndsWith
+
+String must end with a suffix.
+
+```typescript
+tags.EndsWith<S | { value: S; error?: string }>
+```
+
+<ParamField path="value" type="string" required>
+  Required suffix
+</ParamField>
+
+<ParamField path="error" type="string">
+  Custom error message
+</ParamField>
+
+#### Examples
+
+```typescript
+import { tags } from '@tsgonest/types';
+
+interface Example {
+  // Must end with .json
+  configFile: string & tags.EndsWith<'.json'>;
+  
+  // With custom error
+  email: string & tags.EndsWith<{
+    value: '@example.com';
+    error: 'Must be an example.com email';
+  }>;
+}
+```
+
+### Includes
+
+String must contain a substring.
+
+```typescript
+tags.Includes<S | { value: S; error?: string }>
+```
+
+<ParamField path="value" type="string" required>
+  Required substring
+</ParamField>
+
+<ParamField path="error" type="string">
+  Custom error message
+</ParamField>
+
+#### Examples
+
+```typescript
+import { tags } from '@tsgonest/types';
+
+interface Example {
+  // Must contain @
+  email: string & tags.Includes<'@'>;
+  
+  // With custom error
+  url: string & tags.Includes<{
+    value: 'api';
+    error: 'URL must contain "api"';
+  }>;
+}
+```
+
+## Case Validation
+
+### Uppercase
+
+String must be all uppercase.
+
+```typescript
+tags.Uppercase<{ error?: string }>
+```
+
+<ParamField path="error" type="string">
+  Custom error message
+</ParamField>
+
+#### Examples
+
+```typescript
+import { tags } from '@tsgonest/types';
+
+interface Example {
+  code: string & tags.Uppercase;
+  
+  // With custom error
+  country: string & tags.Uppercase<{
+    error: 'Country code must be uppercase';
+  }>;
+}
+```
+
+### Lowercase
+
+String must be all lowercase.
+
+```typescript
+tags.Lowercase<{ error?: string }>
+```
+
+<ParamField path="error" type="string">
+  Custom error message
+</ParamField>
+
+#### Examples
+
+```typescript
+import { tags } from '@tsgonest/types';
+
+interface Example {
+  slug: string & tags.Lowercase;
+  
+  // With custom error
+  username: string & tags.Lowercase<{
+    error: 'Username must be lowercase';
+  }>;
+}
+```
+
+## Transforms
+
+Transforms are applied **before validation** and never fail.
+
+### Trim
+
+Trim whitespace before validation.
+
+```typescript
+tags.Trim
+```
+
+#### Examples
+
+```typescript
+import { tags } from '@tsgonest/types';
+
+interface Example {
+  // Trims then validates length
+  name: string & tags.Trim & tags.MinLength<1>;
+}
+
+// Input: "  John  " → Trimmed: "John" → Valid ✓
+```
+
+### ToLowerCase
+
+Convert to lowercase before validation.
+
+```typescript
+tags.ToLowerCase
+```
+
+#### Examples
+
+```typescript
+import { tags } from '@tsgonest/types';
+
+interface Example {
+  // Converts to lowercase then validates
+  email: string & tags.ToLowerCase & tags.Email;
+}
+
+// Input: "User@EXAMPLE.COM" → Lowercased: "user@example.com" → Valid ✓
+```
+
+### ToUpperCase
+
+Convert to uppercase before validation.
+
+```typescript
+tags.ToUpperCase
+```
+
+#### Examples
+
+```typescript
+import { tags } from '@tsgonest/types';
+
+interface Example {
+  // Converts to uppercase then validates
+  code: string & tags.ToUpperCase & tags.Pattern<'^[A-Z]+$'>;
+}
+
+// Input: "abc" → Uppercased: "ABC" → Valid ✓
+```
+
+## Complete Example
+
+```typescript
+import { tags } from '@tsgonest/types';
+
+interface CreateUserDto {
+  // Email with format validation
+  email: string & tags.Email;
+  
+  // Username with length and case constraints
+  username:
+    | string
+    & tags.MinLength<3>
+    & tags.MaxLength<20>
+    & tags.Pattern<'^[a-z0-9_]+$'>;
+  
+  // Name with trim transform
+  name: string & tags.Trim & tags.MinLength<1> & tags.MaxLength<100>;
+  
+  // Website (optional) with format validation
+  website?: string & tags.Url;
+  
+  // Country code (exactly 2 uppercase letters)
+  country: string & tags.Length<2> & tags.Uppercase;
+  
+  // Bio with length limit
+  bio?: string & tags.MaxLength<500>;
+  
+  // Product code with prefix validation
+  productCode: string & tags.StartsWith<'PROD-'>;
+}
+```
+
+## See Also
+
+- [Types Overview](/api/types/overview)
+- [Numeric Tags](/api/types/numeric-tags)
+- [Array Tags](/api/types/array-tags)
+- [Validation with Branded Types Guide](/guides/validation-branded-types)

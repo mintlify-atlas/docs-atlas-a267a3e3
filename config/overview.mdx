@@ -1,0 +1,201 @@
+---
+title: 'Configuration Overview'
+description: 'Understanding tsgonest configuration files and setup'
+---
+
+## Configuration Files
+
+tsgonest supports two configuration file formats:
+
+<CardGroup cols={2}>
+  <Card title="TypeScript Config" icon="code">
+    **tsgonest.config.ts** (recommended)
+    
+    Type-safe configuration with autocomplete via `defineConfig`
+  </Card>
+  
+  <Card title="JSON Config" icon="file">
+    **tsgonest.config.json**
+    
+    Simple JSON configuration for basic setups
+  </Card>
+</CardGroup>
+
+## Discovery
+
+tsgonest automatically searches for configuration files in the following order:
+
+1. `tsgonest.config.ts`
+2. `tsgonest.config.json`
+
+The first file found will be used.
+
+## TypeScript Configuration
+
+The recommended approach uses TypeScript with the `defineConfig` helper for type safety and autocomplete:
+
+```typescript tsgonest.config.ts
+import { defineConfig } from "@tsgonest/runtime";
+
+export default defineConfig({
+  controllers: {
+    include: ["src/**/*.controller.ts"],
+    exclude: ["src/**/*.spec.ts"],
+  },
+  transforms: {
+    validation: true,
+    serialization: true,
+  },
+  openapi: {
+    output: "dist/openapi.json",
+    title: "My API",
+    version: "1.0.0",
+  },
+});
+```
+
+<Info>
+  The TypeScript config is evaluated via Node.js using either:
+  - **tsx loader** (if installed: `npm i -D tsx`)
+  - **Native TypeScript** (Node.js 22.6+ with `--experimental-strip-types`)
+</Info>
+
+## JSON Configuration
+
+For simpler setups or environments without TypeScript execution support:
+
+```json tsgonest.config.json
+{
+  "controllers": {
+    "include": ["src/**/*.controller.ts"]
+  },
+  "transforms": {
+    "validation": true,
+    "serialization": true
+  },
+  "openapi": {
+    "output": "dist/openapi.json"
+  }
+}
+```
+
+## Default Configuration
+
+If no configuration file is found, tsgonest uses these defaults:
+
+<CodeGroup>
+```typescript Controllers
+{
+  controllers: {
+    include: ["src/**/*.controller.ts"],
+  }
+}
+```
+
+```typescript Transforms
+{
+  transforms: {
+    validation: true,
+    serialization: true,
+    responseSerializer: "guard",
+  }
+}
+```
+
+```typescript OpenAPI
+{
+  openapi: {
+    output: "dist/openapi.json",
+  }
+}
+```
+</CodeGroup>
+
+## Configuration Sections
+
+The configuration is organized into several top-level sections:
+
+<AccordionGroup>
+  <Accordion title="controllers" icon="route">
+    Specifies which controller files to analyze for OpenAPI generation.
+    
+    - `include`: Glob patterns for controller files
+    - `exclude`: Glob patterns to exclude
+  </Accordion>
+  
+  <Accordion title="transforms" icon="wand-magic-sparkles">
+    Controls code generation and transformation behavior.
+    
+    - `validation`: Generate validation companion files
+    - `serialization`: Generate serialization companion files
+    - `standardSchema`: Generate Standard Schema v1 wrappers
+    - `responseSerializer`: Type checking level for responses
+  </Accordion>
+  
+  <Accordion title="openapi" icon="book">
+    OpenAPI document generation settings.
+    
+    - `output`: Path to generated OpenAPI JSON file
+    - `title`, `version`, `description`: API metadata
+    - `servers`, `securitySchemes`: API configuration
+  </Accordion>
+  
+  <Accordion title="nestjs" icon="server">
+    NestJS-specific settings.
+    
+    - `globalPrefix`: Global route prefix (e.g., "api")
+    - `versioning`: API versioning configuration
+  </Accordion>
+  
+  <Accordion title="sdk" icon="code">
+    TypeScript SDK generation settings.
+    
+    - `output`: SDK output directory
+    - `input`: OpenAPI spec path
+  </Accordion>
+</AccordionGroup>
+
+## Dev/Build Settings
+
+These settings mirror `nest-cli.json` conventions for compatibility:
+
+<ParamField path="entryFile" type="string" default="main">
+  Entry point name without extension
+</ParamField>
+
+<ParamField path="sourceRoot" type="string" default="src">
+  Source root directory
+</ParamField>
+
+<ParamField path="deleteOutDir" type="boolean" default="false">
+  Delete output directory before build (like `--clean`)
+</ParamField>
+
+<ParamField path="manualRestart" type="boolean" default="false">
+  Enable "rs" manual restart in dev mode
+</ParamField>
+
+## Validation
+
+tsgonest validates your configuration on load and provides helpful error messages:
+
+```bash
+Error: invalid config in "tsgonest.config.ts":
+  controllers.include must have at least one pattern
+```
+
+<Tip>
+  Use TypeScript config with `defineConfig` to catch configuration errors at development time with IDE autocomplete!
+</Tip>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration Options" icon="gear" href="/config/options">
+    See all available configuration options
+  </Card>
+  
+  <Card title="CLI Reference" icon="terminal" href="/cli/overview">
+    Learn about CLI commands and flags
+  </Card>
+</CardGroup>

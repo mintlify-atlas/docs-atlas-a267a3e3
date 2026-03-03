@@ -1,0 +1,399 @@
+---
+title: Runtime Serialization
+description: Fast schema-aware JSON serializers and compile-time NestJS integration — no pipes, no interceptors.
+---
+
+tsgonest generates fast, schema-aware JSON serializers alongside validators. Serialization is **injected at compile time** — the controller rewriter wraps return statements with `stringifyTypeName()` calls, so no runtime pipes or interceptors are needed.
+
+## Generated Serializers
+
+When `transforms.serialization` is enabled in your config, each companion file includes a `stringify*` function:
+
+```ts title="tsgonest.config.ts"
+import { defineConfig } from '@tsgonest/runtime';
+
+export default defineConfig({
+  transforms: {
+    serialization: true, // ← enable serializers
+  },
+});
+```
+
+After running `tsgonest build`:
+
+```js title="dist/user.dto.UserResponse.tsgonest.js"
+// String escape helper — scans for special chars
+function __s(s) {
+  for (var i = 0; i < s.length; i++) {
+    var c = s.charCodeAt(i);
+    if (c < 32 || c === 34 || c === 92 || c === 0x2028 || c === 0x2029) {
+      return JSON.stringify(s);
+    }
+  }
+  return '"' + s + '"';
+}
+
+export function stringifyUserResponse(input) {
+  return '{"id":' + __s(input.id)
+    + ',"name":' + __s(input.name)
+    + ',"email":' + __s(input.email)
+    + ',"age":' + input.age
+    + ',"createdAt":' + __s(input.createdAt) + '}';
+}
+```
+
+## Why It's Faster
+
+`JSON.stringify` must:
+
+1. **Detect types at runtime** — check every value's type
+2. **Enumerate keys dynamically** — for-in loop over object properties
+3. **Handle edge cases** — circular refs, `toJSON()`, replacer functions
+
+tsgonest serializers skip all of that:
+
+- **Known shape at build time** — property names and types are fixed
+- **Direct string concatenation** — no intermediate array allocation
+- **Optimized string escaping** — fast path for clean strings (no special chars)
+
+### The `__s()` Helper
+
+The `__s()` function scans each character's `charCode`:
+
+- If any control character (< 32), double-quote (34), backslash (92), or LINE/PARAGRAPH SEPARATOR (U+2028/U+2029) is found, it falls back to `JSON.stringify`
+- Otherwise it wraps the string directly in quotes: `'"' + s + '"'`
+
+Most strings in API responses contain no special characters, so the fast path avoids `JSON.stringify` entirely.
+
+## Performance
+
+Benchmarked on Apple Silicon, Node.js 25:
+
+| Scenario | tsgonest | JSON.stringify | Speedup |
+|---|---|---|---|
+| Simple DTO (5 fields, clean strings) | 13.2M ops/s | 9.8M ops/s | **1.4x** |
+| Simple DTO (strings needing escaping) | 7.1M ops/s | 7.4M ops/s | ~1x |
+| Complex DTO (nested + 2-item array) | 1.5M ops/s | 2.4M ops/s | ~0.6x |
+| Complex DTO (nested + 10-item array) | 496K ops/s | 470K ops/s | ~1x |
+
+tsgonest serialization wins on **simple, flat objects** (the vast majority of API DTOs). For deeply nested objects with many optional fields, V8's native `JSON.stringify` is highly optimized and can be faster.
+
+## Supported Types
+
+| Type | Strategy |
+|---|---|
+| `string` | `__s()` charCode scan |
+| `number`, `bigint` | Direct concatenation |
+| `boolean` | `"true"` / `"false"` |
+| `null` | `"null"` |
+| Objects | Property-by-property concatenation |
+| Arrays | For-loop string accumulation |
+| Tuples | Element-by-element serialization |
+| Enums | Value serialization |
+| Optional properties | String accumulation with separator flag |
+| Discriminated unions | O(1) switch on discriminant |
+| Literal unions | Direct value or typeof dispatch |
+| Nullable unions | Null check + inner serialization |
+| Nested objects | Recursive serialization calls |
+
+## Optional Property Handling
+
+For objects with optional properties, the serializer uses **string accumulation with a separator flag** — no array allocation:
+
+```js
+// Generated for { name?: string; email?: string; age?: number }
+export function stringifyUpdateUserDto(input) {
+  return (function() {
+    var _r = "{", _c = "";
+    if (input.name !== undefined) {
+      _r += _c + '"name":' + __s(input.name);
+      _c = ",";
+    }
+    if (input.email !== undefined) {
+      _r += _c + '"email":' + __s(input.email);
+      _c = ",";
+    }
+    if (input.age !== undefined) {
+      _r += _c + '"age":' + input.age;
+      _c = ",";
+    }
+    return _r + "}";
+  })();
+}
+```
+
+The `_c` variable is initially empty and becomes `","` after the first property is added. This avoids trailing commas and intermediate arrays.
+
+## Compile-Time NestJS Integration
+
+tsgonest injects validation and serialization directly into your controller JavaScript **at build time**. No runtime pipes, interceptors, or manifest files are needed.
+
+### How It Works
+
+During `tsgonest build`, the controller rewriter:
+
+1. **Validation**: Wraps `@Body()`, `@Query()`, `@Param()`, and `@Headers()` parameters with `assertTypeName()` calls
+2. **Serialization**: Wraps return statements with `stringifyTypeName()` calls
+3. **Async handling**: Non-async methods returning Promises are automatically made `async` so the value is `await`ed before serialization
+
+```ts title="src/users/user.controller.ts" {1,3,8,12}
+import { Controller, Post, Get, Body } from '@nestjs/common';
+import type { CreateUserDto, UserResponse } from './user.dto';
+
+@Controller('users')
+export class UserController {
+  @Post()
+  create(@Body() dto: CreateUserDto): UserResponse {
+    return this.userService.create(dto);
+  }
+
+  @Get()
+  findAll(): UserResponse[] {
+    return this.userService.findAll();
+  }
+}
+```
+
+After `tsgonest build`:
+
+```js title="dist/users/user.controller.js" {1,2,6,10}
+// tsgonest injects imports from companion files
+import { assertCreateUserDto } from './user.dto.CreateUserDto.tsgonest.js';
+import { stringifyUserResponse } from './user.dto.UserResponse.tsgonest.js';
+
+class UserController {
+  create(dto) {
+    dto = assertCreateUserDto(dto); // ← injected validation
+    return stringifyUserResponse(this.userService.create(dto)); // ← injected serialization
+  }
+
+  findAll() {
+    return this.userService.findAll().map(stringifyUserResponse); // ← array serialization
+  }
+}
+```
+
+### Zero Runtime Setup
+
+Your `main.ts` stays clean — no global pipes or interceptors:
+
+```ts title="src/main.ts"
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './app.module';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+  await app.listen(3000);
+}
+bootstrap();
+```
+
+### Array Responses
+
+Array responses are handled automatically. When the controller method returns an array type (e.g., `UserResponse[]`), the rewriter wraps the return with `.map(stringifyTypeName)` instead of a single call:
+
+```ts
+@Get()
+findAll(): UserResponse[] {
+  return this.userService.findAll();
+}
+```
+
+Becomes:
+
+```js
+findAll() {
+  return this.userService.findAll().map(stringifyUserResponse);
+}
+```
+
+## @tsgonest/runtime Package
+
+The `@tsgonest/runtime` package provides configuration helpers and error types:
+
+```package-install
+tsgonest
+```
+
+Installing `tsgonest` automatically installs `@tsgonest/runtime` as a dependency.
+
+### Exports
+
+```ts
+import {
+  // Config
+  defineConfig,
+  TsgonestConfig,
+
+  // Errors
+  TsgonestValidationError,
+  ValidationErrorDetail,
+
+  // FormData (multipart/form-data)
+  FormDataBody,
+  FormDataInterceptor,
+  TSGONEST_FORM_DATA_FACTORY,
+
+  // SSE (Server-Sent Events)
+  EventStream,
+  SseEvent,
+  SseEvents,
+  TsgonestSseInterceptor,
+
+  // Returns (OpenAPI)
+  Returns,
+} from '@tsgonest/runtime';
+```
+
+## TsgonestValidationError
+
+When validation fails, the injected `assertTypeName()` call throws a `TsgonestValidationError`:
+
+```ts
+import { TsgonestValidationError } from '@tsgonest/runtime';
+
+// Structure:
+interface ValidationErrorDetail {
+  path: string;      // "input.email"
+  expected: string;  // "string (email)"
+  received: string;  // "number"
+}
+
+// Error message format:
+// "Validation failed: 2 error(s)
+//   - input.name: expected string, received number
+//   - input.age: expected number, received string"
+```
+
+NestJS catches the thrown error and returns a 400 Bad Request response with structured error details:
+
+```json
+{
+  "statusCode": 400,
+  "message": "Validation failed",
+  "errors": [
+    {
+      "property": "input.email",
+      "constraints": {
+        "tsgonest": "expected string (email), received string"
+      }
+    }
+  ]
+}
+```
+
+## Content-Type Header
+
+The `TsgonestSerializeInterceptor` is automatically injected on controller classes that have response serialization. It sets the `Content-Type` header to `application/json; charset=utf-8` before the response is sent.
+
+Without this interceptor, Fastify/Express might send the JSON string as `text/plain` or double-quote it.
+
+```ts title="packages/runtime/src/serialize-interceptor.ts"
+export class TsgonestSerializeInterceptor {
+  intercept(context: any, next: any): any {
+    const response = context.switchToHttp().getResponse();
+    response.header('Content-Type', 'application/json; charset=utf-8');
+    return next.handle();
+  }
+}
+```
+
+The interceptor is injected via `@UseInterceptors(TsgonestSerializeInterceptor)` at the class level during the controller rewrite.
+
+## Disabling Serialization
+
+If you prefer to use `JSON.stringify` or need to disable serialization for specific routes, set `transforms.serialization: false` in your config:
+
+```ts title="tsgonest.config.ts"
+import { defineConfig } from '@tsgonest/runtime';
+
+export default defineConfig({
+  transforms: {
+    serialization: false, // ← disable serializers
+  },
+});
+```
+
+Validation is still injected, but return values are not transformed.
+
+## Practical Example
+
+Here's a full controller with validation and serialization:
+
+```ts title="src/orders/order.dto.ts"
+import { Uuid, Min, Max, Int, MinItems, MaxItems } from '@tsgonest/types';
+
+export interface OrderItem {
+  productId: string & Uuid;
+  quantity: number & Int & Min<1> & Max<1000>;
+  price: number & Min<0>;
+}
+
+export interface CreateOrderDto {
+  items: OrderItem[] & MinItems<1> & MaxItems<100>;
+  note?: string;
+}
+
+export interface OrderResponse {
+  id: string;
+  items: OrderItem[];
+  total: number;
+  createdAt: string;
+}
+```
+
+```ts title="src/orders/order.controller.ts"
+import { Controller, Post, Get, Body, Param } from '@nestjs/common';
+import type { CreateOrderDto, OrderResponse } from './order.dto';
+
+@Controller('orders')
+export class OrderController {
+  @Post()
+  create(@Body() dto: CreateOrderDto): OrderResponse {
+    return this.orderService.create(dto);
+  }
+
+  @Get(':id')
+  findOne(@Param('id') id: string): OrderResponse {
+    return this.orderService.findOne(id);
+  }
+
+  @Get()
+  findAll(): OrderResponse[] {
+    return this.orderService.findAll();
+  }
+}
+```
+
+After `tsgonest build`:
+
+```js title="dist/orders/order.controller.js"
+import { assertCreateOrderDto } from './order.dto.CreateOrderDto.tsgonest.js';
+import { stringifyOrderResponse } from './order.dto.OrderResponse.tsgonest.js';
+import { TsgonestSerializeInterceptor } from '@tsgonest/runtime';
+
+// Interceptor auto-injected at class level
+@UseInterceptors(TsgonestSerializeInterceptor)
+class OrderController {
+  create(dto) {
+    dto = assertCreateOrderDto(dto);
+    return stringifyOrderResponse(this.orderService.create(dto));
+  }
+
+  findOne(id) {
+    return stringifyOrderResponse(this.orderService.findOne(id));
+  }
+
+  findAll() {
+    return this.orderService.findAll().map(stringifyOrderResponse);
+  }
+}
+```
+
+All validation, serialization, and content-type handling is injected at compile time. Your source code stays clean and framework-agnostic.
+
+## Next Steps
+
+- [Controller-Based OpenAPI](/guides/openapi-controllers) — Generate OpenAPI from NestJS controllers
+- [Parameter Documentation](/guides/openapi-parameters) — Query, path, body, and header parameters
+- [Return Type Documentation](/guides/openapi-returns) — Response types and @Returns decorator

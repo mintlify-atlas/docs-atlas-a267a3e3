@@ -1,0 +1,217 @@
+---
+title: CLI Overview
+description: tsgonest command-line interface reference
+---
+
+## Introduction
+
+The `tsgonest` CLI provides commands for building, developing, migrating, and generating SDKs from your TypeScript projects. It's designed as a drop-in replacement for the NestJS CLI with additional static analysis capabilities.
+
+## Installation
+
+```bash
+npm install -D tsgonest
+# or
+pnpm add -D tsgonest
+# or
+yarn add -D tsgonest
+```
+
+## Commands
+
+<CardGroup cols={2}>
+  <Card title="build" icon="hammer" href="/cli/build">
+    Compile TypeScript and generate companions
+  </Card>
+  <Card title="dev" icon="rotate" href="/cli/dev">
+    Watch mode with automatic reloading
+  </Card>
+  <Card title="migrate" icon="arrows-rotate" href="/cli/migrate">
+    Migrate from class-validator/Nestia
+  </Card>
+  <Card title="sdk" icon="code" href="/cli/sdk">
+    Generate TypeScript SDK from OpenAPI
+  </Card>
+</CardGroup>
+
+## Global Options
+
+These options work with all commands:
+
+<ParamField path="--version" flag="-v" type="boolean">
+  Print version and exit
+  
+  ```bash
+  tsgonest --version
+  # Output: tsgonest 0.7.0
+  ```
+</ParamField>
+
+<ParamField path="--help" flag="-h" type="boolean">
+  Print help message and exit
+  
+  ```bash
+  tsgonest --help
+  ```
+</ParamField>
+
+## Common Patterns
+
+### Default Build
+
+Running `tsgonest` without arguments runs the build command:
+
+```bash
+tsgonest
+# Equivalent to:
+tsgonest build
+```
+
+### Flags Without Subcommand
+
+Flags starting with `-` are interpreted as build flags when no subcommand is provided:
+
+```bash
+tsgonest --project tsconfig.build.json
+# Equivalent to:
+tsgonest build --project tsconfig.build.json
+```
+
+### Config File Auto-Discovery
+
+If no `--config` flag is provided, tsgonest automatically searches for:
+
+1. `tsgonest.config.ts` (recommended, evaluated via Node.js)
+2. `tsgonest.config.json`
+
+```bash
+tsgonest build
+# Automatically loads tsgonest.config.ts if it exists
+```
+
+### TypeScript Compiler Flag Passthrough
+
+Any flag not recognized by tsgonest is forwarded to the TypeScript compiler:
+
+```bash
+# All of these are passed to tsgo:
+tsgonest build --strict --noEmit --target es2022
+tsgonest --sourceMap --inlineSources
+```
+
+## Exit Codes
+
+All commands follow consistent exit code conventions:
+
+<ResponseField name="0" type="Success">
+  No errors, compilation succeeded
+</ResponseField>
+
+<ResponseField name="1" type="Compilation Error">
+  Type errors or syntax errors present, but outputs were generated (unless `noEmitOnError` is set)
+</ResponseField>
+
+<ResponseField name="2" type="Emit Skipped">
+  Errors present and `noEmitOnError` is enabled, no files were written
+</ResponseField>
+
+## Terminal Output
+
+### Pretty Output
+
+tsgonest detects terminal capabilities and automatically formats diagnostics with:
+
+- Color-coded severity (errors in red, warnings in yellow)
+- File paths with line/column numbers
+- Code snippets with error highlighting
+- Error summary with counts
+
+### Plain Output
+
+For CI/CD or non-TTY environments, output is plain text without ANSI codes.
+
+### Example Output
+
+```bash Terminal
+$ tsgonest build
+loaded config from tsgonest.config.ts
+compiling with tsconfig: tsconfig.json
+inferred rootDir: src
+incremental build enabled
+emitted 12 file(s)
+generated 8 companion file(s)
+found 3 controller(s) with 15 route(s)
+generated OpenAPI document: dist/openapi.json
+
+Build time: 1.2s
+  TSConfig: 45ms
+  Program: 234ms
+  Diagnostics: 456ms
+  Emit: 123ms
+  Companions: 89ms
+  Controllers: 67ms
+  OpenAPI: 34ms
+```
+
+## Configuration
+
+All commands respect the `tsgonest.config.ts` or `tsgonest.config.json` file. See [Configuration](/config/overview) for details.
+
+## Error Handling
+
+### Type Errors
+
+By default, type errors are reported but don't prevent emit:
+
+```bash Terminal
+$ tsgonest build
+user.dto.ts(12,5): error TS2741: Property 'email' is missing
+emitted 5 file(s)
+# Exit code: 1
+```
+
+With `noEmitOnError` in tsconfig.json:
+
+```bash Terminal
+$ tsgonest build
+user.dto.ts(12,5): error TS2741: Property 'email' is missing
+no files emitted (noEmitOnError)
+# Exit code: 2
+```
+
+### Syntax Errors
+
+Syntax errors are always reported and counted as failures:
+
+```bash Terminal
+$ tsgonest build
+bad.ts(5,12): error TS1005: ';' expected
+emitted 4 file(s)  # Other files still emit
+# Exit code: 1
+```
+
+### Skip Type Checking
+
+Use `--no-check` to skip type checking (syntax errors still reported):
+
+```bash
+tsgonest build --no-check
+# Only syntax errors are checked, much faster
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Build Command" icon="hammer" href="/cli/build">
+    Learn about build flags and options
+  </Card>
+  <Card title="Dev Command" icon="rotate" href="/cli/dev">
+    Set up watch mode and hot reload
+  </Card>
+  <Card title="Configuration" icon="gear" href="/config/overview">
+    Configure tsgonest for your project
+  </Card>
+  <Card title="Companion Files" icon="file-code" href="/concepts/compilation#companion-files">
+    Understand generated companion files
+  </Card>
+</CardGroup>

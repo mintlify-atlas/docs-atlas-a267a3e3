@@ -1,0 +1,534 @@
+---
+title: tsgonest migrate
+description: Migrate from class-validator and Nestia to tsgonest
+---
+
+## Usage
+
+```bash
+tsgonest migrate [flags]
+```
+
+Automatically migrates your NestJS project from:
+
+- **class-validator** / **class-transformer** decorators
+- **Nestia** type tags
+
+To tsgonest's JSDoc-based validation and serialization.
+
+<Note>
+  The migrate command is a Node.js script bundled with the CLI. It requires Node.js to be available in your PATH.
+</Note>
+
+## Flags
+
+<ParamField path="--apply" type="boolean" default={false}>
+  Write changes to disk (default: dry-run preview)
+  
+  Without this flag, migrate shows a preview of changes without modifying files.
+  
+  ```bash
+  # Preview changes:
+  tsgonest migrate
+  
+  # Apply changes (interactive):
+  tsgonest migrate --apply
+  ```
+</ParamField>
+
+<ParamField path="--yes" flag="-y" type="boolean" default={false}>
+  Accept all prompts (non-interactive)
+  
+  Automatically applies all changes without confirmation. Use with caution.
+  
+  ```bash
+  tsgonest migrate --apply --yes
+  ```
+</ParamField>
+
+<ParamField path="--include" type="string" repeatable>
+  Glob pattern for files to migrate (repeatable)
+  
+  By default, migrates files matching your tsconfig includes. Use `--include` to override.
+  
+  ```bash
+  # Single pattern:
+  tsgonest migrate --include 'src/**/*.dto.ts'
+  
+  # Multiple patterns:
+  tsgonest migrate --include 'src/**/*.dto.ts' --include 'libs/**/*.entity.ts'
+  ```
+</ParamField>
+
+<ParamField path="--tsconfig" type="string" default="tsconfig.json">
+  Path to tsconfig.json
+  
+  ```bash
+  tsgonest migrate --tsconfig tsconfig.build.json
+  ```
+</ParamField>
+
+<ParamField path="--cwd" type="string" default=".">
+  Working directory
+  
+  ```bash
+  tsgonest migrate --cwd apps/api
+  ```
+</ParamField>
+
+<ParamField path="--force" type="boolean" default={false}>
+  Run even if git working directory is dirty
+  
+  By default, migrate refuses to run if you have uncommitted changes. Use `--force` to override.
+  
+  ```bash
+  tsgonest migrate --apply --force
+  ```
+  
+  <Warning>
+    Using `--force` can overwrite uncommitted changes. Commit or stash your work first.
+  </Warning>
+</ParamField>
+
+## Migration Process
+
+### 1. Dry Run (Preview)
+
+Run without `--apply` to preview changes:
+
+```bash
+tsgonest migrate
+```
+
+```bash Terminal
+$ tsgonest migrate
+
+Scanning files matching: src/**/*.ts
+
+Found 15 files to migrate:
+  src/users/dto/create-user.dto.ts
+  src/users/dto/update-user.dto.ts
+  src/products/dto/product.dto.ts
+  ...
+
+Preview of changes:
+
+━━━ src/users/dto/create-user.dto.ts ━━━
+
+- import { IsEmail, IsString, MinLength } from 'class-validator';
++ /**
++  * @minLength 1
++  */
+  export class CreateUserDto {
+-   @IsEmail()
++   /** @email */
+    email: string;
+  
+-   @IsString()
+-   @MinLength(8)
++   /** @minLength 8 */
+    password: string;
+  }
+
+Summary:
+  15 files to migrate
+  42 decorators to replace
+  3 imports to remove
+
+Run with --apply to write changes.
+```
+
+### 2. Interactive Migration
+
+Run with `--apply` for interactive confirmation:
+
+```bash
+tsgonest migrate --apply
+```
+
+```bash Terminal
+$ tsgonest migrate --apply
+
+Scanning files...
+Found 15 files with 42 decorators to migrate.
+
+✓ Apply these changes? (y/N) y
+
+Migrating files...
+  ✓ src/users/dto/create-user.dto.ts
+  ✓ src/users/dto/update-user.dto.ts
+  ✓ src/products/dto/product.dto.ts
+  ...
+
+Migration complete!
+  15 files updated
+  42 decorators replaced
+  3 packages can be removed:
+    - class-validator
+    - class-transformer
+    - @nestjs/mapped-types
+
+Next steps:
+  1. Review changes: git diff
+  2. Update package.json: npm uninstall class-validator class-transformer
+  3. Update NestJS app: Remove ValidationPipe (tsgonest auto-injects validation)
+  4. Test your app: npm test
+```
+
+### 3. Non-Interactive Migration
+
+Run with `--apply --yes` for automatic migration:
+
+```bash
+tsgonest migrate --apply --yes
+```
+
+Applies all changes without prompting.
+
+## Supported Migrations
+
+### class-validator Decorators
+
+The migrate command replaces class-validator decorators with equivalent JSDoc tags:
+
+| class-validator | tsgonest JSDoc |
+|----------------|----------------|
+| `@IsString()` | (inferred from type) |
+| `@IsNumber()` | (inferred from type) |
+| `@IsBoolean()` | (inferred from type) |
+| `@IsEmail()` | `@email` |
+| `@IsUrl()` | `@url` |
+| `@IsUUID()` | `@uuid` |
+| `@IsDate()` | `@date` |
+| `@MinLength(n)` | `@minLength n` |
+| `@MaxLength(n)` | `@maxLength n` |
+| `@Min(n)` | `@minimum n` |
+| `@Max(n)` | `@maximum n` |
+| `@IsOptional()` | `?` (optional property) |
+| `@IsArray()` | (inferred from `[]` type) |
+| `@IsEnum(E)` | (inferred from enum type) |
+| `@ValidateNested()` | (inferred from object type) |
+| `@Type(() => T)` | (inferred from type) |
+
+### Nestia Type Tags
+
+Also migrates Nestia's `typia.tags` to JSDoc:
+
+```typescript
+// Before (Nestia):
+export interface User {
+  email: string & typia.tags.Format<"email">;
+  age: number & typia.tags.Minimum<18>;
+}
+
+// After (tsgonest):
+export interface User {
+  /** @email */
+  email: string;
+  
+  /** @minimum 18 */
+  age: number;
+}
+```
+
+### Complex Examples
+
+#### Nested DTOs
+
+```typescript
+// Before:
+import { IsString, IsOptional, ValidateNested, Type } from 'class-validator';
+
+class AddressDto {
+  @IsString()
+  street: string;
+  
+  @IsString()
+  city: string;
+}
+
+class UserDto {
+  @IsString()
+  name: string;
+  
+  @ValidateNested()
+  @Type(() => AddressDto)
+  @IsOptional()
+  address?: AddressDto;
+}
+
+// After:
+interface AddressDto {
+  street: string;
+  city: string;
+}
+
+interface UserDto {
+  name: string;
+  address?: AddressDto;  // Validation inferred from type
+}
+```
+
+#### Arrays
+
+```typescript
+// Before:
+import { IsArray, IsString, ArrayMinSize } from 'class-validator';
+
+class TagsDto {
+  @IsArray()
+  @IsString({ each: true })
+  @ArrayMinSize(1)
+  tags: string[];
+}
+
+// After:
+interface TagsDto {
+  /** @minItems 1 */
+  tags: string[];
+}
+```
+
+#### Enums
+
+```typescript
+// Before:
+import { IsEnum } from 'class-validator';
+
+enum Role { Admin, User }
+
+class UserDto {
+  @IsEnum(Role)
+  role: Role;
+}
+
+// After:
+enum Role { Admin, User }
+
+interface UserDto {
+  role: Role;  // Enum validation inferred from type
+}
+```
+
+## Git Safety
+
+### Dirty Working Directory Check
+
+By default, migrate refuses to run if you have uncommitted changes:
+
+```bash Terminal
+$ tsgonest migrate --apply
+error: Git working directory is dirty.
+Commit or stash your changes before running migrate.
+
+Use --force to override (not recommended).
+```
+
+Commit your work first:
+
+```bash
+git add .
+git commit -m "Checkpoint before migration"
+tsgonest migrate --apply
+```
+
+Or stash:
+
+```bash
+git stash
+tsgonest migrate --apply
+git stash pop  # After reviewing changes
+```
+
+### Review Changes
+
+After migration, review changes with git:
+
+```bash
+git diff
+git diff --stat
+```
+
+If satisfied:
+
+```bash
+git add .
+git commit -m "Migrate from class-validator to tsgonest"
+```
+
+If not satisfied:
+
+```bash
+git reset --hard HEAD  # Discard all changes
+```
+
+## Post-Migration Steps
+
+### 1. Remove Dependencies
+
+Uninstall class-validator and related packages:
+
+```bash
+npm uninstall class-validator class-transformer @nestjs/mapped-types
+# or
+pnpm remove class-validator class-transformer @nestjs/mapped-types
+```
+
+### 2. Update NestJS App
+
+Remove `ValidationPipe` from your bootstrap code:
+
+```typescript main.ts
+// Before:
+import { ValidationPipe } from '@nestjs/common';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+  app.useGlobalPipes(new ValidationPipe());  // ❌ Remove this
+  await app.listen(3000);
+}
+
+// After:
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+  // tsgonest auto-injects validation, no pipe needed
+  await app.listen(3000);
+}
+```
+
+### 3. Update Imports
+
+Update DTO imports to use interfaces instead of classes:
+
+```typescript
+// Before:
+import { CreateUserDto } from './dto/create-user.dto';
+
+@Post()
+create(@Body() dto: CreateUserDto) {
+  // ...
+}
+
+// After (no changes needed!):
+import { CreateUserDto } from './dto/create-user.dto';
+
+@Post()
+create(@Body() dto: CreateUserDto) {
+  // tsgonest automatically validates
+}
+```
+
+### 4. Test Your Application
+
+Run tests to ensure validation still works:
+
+```bash
+npm test
+```
+
+Test validation manually:
+
+```bash
+curl -X POST http://localhost:3000/users \
+  -H 'Content-Type: application/json' \
+  -d '{"email": "invalid"}'
+
+# Should return 400 Bad Request with validation errors
+```
+
+## Troubleshooting
+
+### "node: command not found"
+
+The migrate command requires Node.js:
+
+```bash
+node --version
+```
+
+Install Node.js if missing.
+
+### "could not find migrate.cjs"
+
+Ensure `tsgonest` is properly installed:
+
+```bash
+npm install -D tsgonest
+# Verify installation:
+ls -la node_modules/tsgonest/bin/
+```
+
+### Migration produces incorrect output
+
+Some complex decorators may not be fully supported. Review the diff and manually adjust:
+
+```bash
+git diff src/users/dto/create-user.dto.ts
+```
+
+If you find unsupported decorators, please [open an issue](https://github.com/tsgonest/tsgonest/issues).
+
+### Custom validators not migrated
+
+Custom class-validator decorators (`@IsPasswordStrong()`, etc.) are not automatically migrated. Replace with:
+
+1. JSDoc tags (if supported by tsgonest)
+2. Manual validation in service layer
+3. Custom tsgonest metadata (advanced)
+
+## Examples
+
+### Migrate Specific Files
+
+```bash
+tsgonest migrate --include 'src/**/*.dto.ts' --apply
+```
+
+### Migrate in Monorepo
+
+```bash
+tsgonest migrate --cwd apps/api --apply
+```
+
+### Migrate with Custom tsconfig
+
+```bash
+tsgonest migrate --tsconfig tsconfig.build.json --apply
+```
+
+### Non-Interactive CI Migration
+
+```bash
+tsgonest migrate --apply --yes --force
+```
+
+<Warning>
+  Only use `--yes --force` in CI if you're absolutely sure. Always review changes in a pull request first.
+</Warning>
+
+## Exit Codes
+
+<ResponseField name="0" type="Success">
+  Migration completed successfully (or dry-run completed)
+</ResponseField>
+
+<ResponseField name="1" type="Error">
+  Migration failed (e.g., git dirty check failed, Node.js not found, invalid arguments)
+</ResponseField>
+
+## See Also
+
+<CardGroup cols={2}>
+  <Card title="Validation" icon="shield-check" href="/concepts/validation">
+    Learn about tsgonest validation
+  </Card>
+  <Card title="JSDoc Tags" icon="tag" href="/guides/validation-jsdoc">
+    Complete JSDoc tag reference
+  </Card>
+  <Card title="Configuration" icon="gear" href="/config/overview">
+    Configure transforms and validation
+  </Card>
+  <Card title="Migration Guide" icon="book" href="/migration/from-nestia">
+    Detailed migration guide
+  </Card>
+</CardGroup>

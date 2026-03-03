@@ -1,0 +1,185 @@
+---
+title: 'TsgonestValidationError'
+description: 'Structured validation error class for request validation failures'
+---
+
+## Overview
+
+`TsgonestValidationError` is thrown when validation fails on `@Body()`, `@Query()`, `@Param()`, or `@Headers()` parameters. It contains structured error details for each invalid field, making it easy to provide detailed error responses to API clients.
+
+## Import
+
+```typescript
+import { TsgonestValidationError } from '@tsgonest/runtime';
+```
+
+## Class Definition
+
+```typescript
+class TsgonestValidationError extends Error {
+  public readonly errors: ValidationErrorDetail[];
+  public status?: number;
+
+  constructor(errors: ValidationErrorDetail[]);
+}
+```
+
+## Properties
+
+<ParamField path="errors" type="ValidationErrorDetail[]" required>
+  Array of validation error details
+  
+  <Expandable title="ValidationErrorDetail Properties">
+    <ParamField path="path" type="string" required>
+      The path to the invalid field (e.g., `"input.name"`, `"query.page"`)
+    </ParamField>
+    <ParamField path="expected" type="string" required>
+      The expected type or constraint (e.g., `"string & Email"`, `"number >= 0"`)
+    </ParamField>
+    <ParamField path="received" type="string" required>
+      The received type or value description (e.g., `"invalid@"`, `"-5"`)
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="status" type="number">
+  HTTP status code (typically 400 for validation errors)
+</ParamField>
+
+<ParamField path="name" type="string">
+  Always set to `"TsgonestValidationError"`
+</ParamField>
+
+<ParamField path="message" type="string">
+  Human-readable error message summarizing all validation failures
+</ParamField>
+
+## Usage Examples
+
+### Basic Validation Error
+
+```typescript
+import { TsgonestValidationError } from '@tsgonest/runtime';
+import type { ValidationErrorDetail } from '@tsgonest/runtime';
+
+const errors: ValidationErrorDetail[] = [
+  {
+    path: 'email',
+    expected: 'string & Email',
+    received: 'invalid@',
+  },
+  {
+    path: 'age',
+    expected: 'number >= 0',
+    received: '-5',
+  },
+];
+
+throw new TsgonestValidationError(errors);
+// Error: Validation failed: 2 error(s)
+//   - email: expected string & Email, received invalid@
+//   - age: expected number >= 0, received -5
+```
+
+### Custom Exception Filter
+
+Create a NestJS exception filter to handle validation errors and return structured JSON responses:
+
+```typescript exception-filter.ts
+import {
+  ExceptionFilter,
+  Catch,
+  ArgumentsHost,
+  HttpStatus,
+} from '@nestjs/common';
+import { TsgonestValidationError } from '@tsgonest/runtime';
+import type { FastifyReply } from 'fastify';
+
+@Catch(TsgonestValidationError)
+export class ValidationExceptionFilter implements ExceptionFilter {
+  catch(exception: TsgonestValidationError, host: ArgumentsHost) {
+    const ctx = host.switchToHttp();
+    const response = ctx.getResponse<FastifyReply>();
+
+    response.status(HttpStatus.BAD_REQUEST).send({
+      statusCode: HttpStatus.BAD_REQUEST,
+      message: 'Validation failed',
+      errors: exception.errors.map((error) => ({
+        field: error.path,
+        message: `Expected ${error.expected}, received ${error.received}`,
+      })),
+    });
+  }
+}
+```
+
+### Register the Filter
+
+```typescript main.ts
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './app.module';
+import { ValidationExceptionFilter } from './validation-exception.filter';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+  app.useGlobalFilters(new ValidationExceptionFilter());
+  await app.listen(3000);
+}
+bootstrap();
+```
+
+### Example Error Response
+
+With the above filter, validation errors return structured JSON:
+
+```json
+{
+  "statusCode": 400,
+  "message": "Validation failed",
+  "errors": [
+    {
+      "field": "email",
+      "message": "Expected string & Email, received invalid@"
+    },
+    {
+      "field": "age",
+      "message": "Expected number >= 0, received -5"
+    }
+  ]
+}
+```
+
+## Automatic Injection
+
+You don't need to throw `TsgonestValidationError` manually. tsgonest automatically injects validation checks for:
+
+- `@Body()` parameters (JSON request bodies)
+- `@Query()` parameters (URL query strings)
+- `@Param()` parameters (URL path parameters)
+- `@Headers()` parameters (HTTP headers)
+
+Validation failures automatically throw `TsgonestValidationError` with detailed diagnostics.
+
+## Type Guard
+
+Check if an error is a validation error:
+
+```typescript
+import { TsgonestValidationError } from '@tsgonest/runtime';
+
+try {
+  // ... controller logic
+} catch (error) {
+  if (error instanceof TsgonestValidationError) {
+    console.log('Validation failed:', error.errors);
+  } else {
+    console.error('Unexpected error:', error);
+  }
+}
+```
+
+## See Also
+
+- [Validation with JSDoc](/guides/validation-jsdoc)
+- [Validation with Branded Types](/guides/validation-branded-types)
+- [Validation Errors Guide](/concepts/validation#error-handling)

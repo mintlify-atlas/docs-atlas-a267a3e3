@@ -1,0 +1,439 @@
+---
+title: Contributing Guide
+description: How to contribute to tsgonest, including setup, testing, commit conventions, and development workflows.
+---
+
+Thank you for your interest in contributing to tsgonest. This guide covers everything you need to get started.
+
+## Prerequisites
+
+Before contributing, make sure you have the following tools installed:
+
+| Tool | Version | Purpose |
+|------|---------|----------|
+| **Go** | 1.24+ | Build the CLI binary |
+| **Node.js** | 22+ | Run e2e tests and docs |
+| **pnpm** | 10+ | Manage the npm workspace |
+| **Git** | any | Version control |
+| **just** | any (optional) | Task runner for common commands |
+
+## Getting started
+
+### 1. Clone the repository
+
+```bash
+# Clone with submodules (typescript-go is required)
+git clone --recurse-submodules https://github.com/tsgonest/tsgonest.git
+cd tsgonest
+```
+
+If you cloned without `--recurse-submodules`, initialize the submodule:
+
+```bash
+git submodule update --init --recursive
+```
+
+### 2. Install dependencies
+
+```bash
+# Install npm workspace dependencies
+pnpm install
+```
+
+### 3. Build the binary
+
+```bash
+# Using just (recommended)
+just build
+
+# Or manually:
+go build -o tsgonest ./cmd/tsgonest
+```
+
+The binary will be placed at `./tsgonest` (or `packages/core/bin/tsgonest` with `just build`).
+
+## Repository structure
+
+```text
+Root:
+  cmd/tsgonest/          CLI entry point (main.go, build.go, dev.go)
+  internal/              Core Go packages
+    analyzer/            AST analysis (type walker, NestJS analyzer)
+    buildcache/          Post-processing cache
+    codegen/             Companion file generation
+    compiler/            tsgo program creation and emission
+    config/              Config parsing and validation
+    metadata/            Type metadata schema
+    openapi/             OpenAPI 3.2 document generation
+    pathalias/           Path alias resolution
+    rewrite/             Controller JS rewriting
+    sdkgen/              SDK client generation
+    watcher/             File system watcher
+  shim/                  [GENERATED] tsgo API shims (do not edit)
+  patches/               Git patches for typescript-go submodule
+  tools/gen_shims/       Shim code generator
+  testdata/              Test fixtures
+  typescript-go/         [SUBMODULE] Microsoft's TypeScript Go port
+  e2e/                   End-to-end tests (Vitest)
+
+Workspace:
+  apps/docs/             Next.js + Fumadocs documentation site
+  packages/
+    core/                tsgonest npm package (Node.js launcher)
+    runtime/             @tsgonest/runtime (defineConfig, errors)
+    types/               @tsgonest/types (branded phantom types)
+    cli-*/               Platform binary packages (darwin, linux, windows)
+```
+
+## Development workflow
+
+### Building
+
+```bash
+# Build the Go binary
+just build
+# Or: go build -o tsgonest ./cmd/tsgonest
+
+# Build TypeScript packages (runtime, types, migrate)
+pnpm build:packages
+
+# Build documentation site
+pnpm build:docs
+```
+
+### Testing
+
+```bash
+# Run full test suite (unit + e2e)
+just test
+
+# Run Go unit tests only (~580+ tests)
+just test-unit
+# Or: go test ./internal/... -count=1
+
+# Run e2e tests only (101 tests)
+just test-e2e
+# Or: pnpm test:e2e
+
+# Run a single test package
+go test ./internal/analyzer/... -v
+
+# Run a specific test
+go test ./internal/analyzer/... -run TestTypeWalker -v
+```
+
+**Important:** E2e tests require the Go binary to be built first (`just build`).
+
+### Formatting
+
+```bash
+# Format Go code
+just fmt
+# Or: gofmt -w internal/ cmd/ tools/
+
+# Run formatter + full test suite (pre-commit check)
+just ready
+```
+
+### Working on packages
+
+```bash
+# Runtime package
+pnpm --filter @tsgonest/runtime build
+pnpm --filter @tsgonest/runtime test
+
+# Types package
+pnpm --filter @tsgonest/types build
+pnpm --filter @tsgonest/types test
+
+# Documentation site
+pnpm --filter docs dev       # Dev server with hot reload
+pnpm --filter docs build     # Static export → apps/docs/out/
+pnpm --filter docs start     # Serve the static export
+```
+
+## Making changes
+
+### Code organization
+
+#### Safe to modify
+
+- `internal/*` — All internal Go packages
+- `cmd/tsgonest/*` — CLI implementation
+- `e2e/*` — End-to-end tests
+- `testdata/*` — Test fixtures
+- `packages/runtime/*` — Runtime package source
+- `packages/types/*` — Types package source
+- `packages/core/*` — Main tsgonest npm package
+- `apps/docs/*` — Documentation site
+- Documentation files (`*.md`, `*.mdx`)
+
+#### DO NOT modify
+
+- `typescript-go/*` — Submodule (use `patches/` for permanent changes)
+- `shim/*/shim.go` — Generated code (regenerate with `just shim`)
+- `.gitmodules` — Submodule configuration
+- `internal/collections/*` — Synced from typescript-go by `just init`
+- `packages/cli-*/` — Platform binary packages (populated by CI)
+
+#### Modify with caution
+
+- `patches/*` — TypeScript-go patches (document thoroughly)
+- `tools/gen_shims/*` — Shim generator (affects all shims)
+- `go.mod`, `go.work` — Module configuration
+- `shim/*/extra-shim.json` — Shim configuration (regenerate after changes)
+- `pnpm-workspace.yaml`, root `package.json` — Workspace configuration
+
+### Working with the typescript-go submodule
+
+The `typescript-go/` directory is a Git submodule pointing to Microsoft's TypeScript Go port.
+
+**CRITICAL:** Do not commit changes to the submodule directly. Changes will be lost when the submodule is updated.
+
+Instead, use patch files:
+
+```bash
+# 1. Make your changes inside typescript-go/
+cd typescript-go
+# ... edit files ...
+
+# 2. Create a patch file
+git format-patch HEAD~1 -o ../patches/
+
+# 3. Reset the submodule to its original state
+git checkout .
+
+# 4. Back in the root: test that the patch applies cleanly
+cd ..
+git -C typescript-go am patches/0001-your-change.patch
+```
+
+Patches in `patches/` are applied automatically during `just init`.
+
+### Adding shim methods
+
+tsgonest accesses unexported tsgo functions via a shim layer. To expose a new method:
+
+1. Find the function in `typescript-go/` (e.g., `checker.getTypeOfExpression`)
+2. Add it to the relevant `shim/*/extra-shim.json` under `ExtraMethods`
+3. Regenerate shims:
+   ```bash
+   just shim
+   # Or: go run tools/gen_shims/main.go
+   ```
+4. Use it in Go code as `checker.Checker_getTypeOfExpression(recv, args...)`
+5. Run `go mod tidy` if new imports were added
+
+**Example shim entry:**
+```json
+{
+  "ExtraMethods": [
+    {
+      "RecvPkg": "github.com/microsoft/typescript-go/checker",
+      "RecvType": "Checker",
+      "MethodName": "getPropertiesOfType"
+    }
+  ]
+}
+```
+
+This generates:
+```go
+//go:linkname Checker_getPropertiesOfType github.com/microsoft/typescript-go/checker.(*Checker).getPropertiesOfType
+func Checker_getPropertiesOfType(recv *Checker, t Type) []Symbol
+```
+
+## Commit conventions
+
+tsgonest uses [Conventional Commits](https://www.conventionalcommits.org/) for changelog generation.
+
+### Format
+
+```text
+<type>(<optional scope>): <short description>
+
+<optional body>
+
+<optional footer>
+```
+
+### Types
+
+| Type | When to use |
+|------|-------------|
+| `feat` | New user-facing feature |
+| `fix` | Bug fix |
+| `perf` | Performance improvement |
+| `refactor` | Code change that neither fixes a bug nor adds a feature |
+| `docs` | Documentation only |
+| `test` | Adding or updating tests |
+| `chore` | Build system, CI, dependency updates |
+| `ci` | Changes to CI/CD workflows |
+
+### Breaking changes
+
+Breaking changes must include `BREAKING CHANGE:` in the footer or a `!` after the type:
+
+```text
+feat!: rename config field from `foo` to `bar`
+
+BREAKING CHANGE: The `foo` field in tsgonest.config.ts has been renamed to `bar`.
+```
+
+### Examples
+
+```text
+feat(codegen): add support for tuple types
+
+fix(analyzer): resolve infinite recursion on self-referential types
+
+perf(serializer): use string concatenation for known property shapes
+
+docs: add migration guide from Nestia
+
+test(e2e): add test for discriminated union optimization
+
+chore(deps): update typescript-go submodule to v1.5.0
+```
+
+The changelog is auto-generated from these commit messages on every release.
+
+## Submitting a pull request
+
+1. **Fork the repository** and create a branch from `main`
+2. **Make your changes** and add/update tests as appropriate
+3. **Run the test suite** to ensure everything passes:
+   ```bash
+   just ready  # Runs formatter + full test suite
+   ```
+4. **Commit your changes** following the commit conventions above
+5. **Push your branch** and open a PR against `main`
+6. **Wait for review** — a maintainer will review and merge it
+
+For large changes, consider opening an issue first to discuss the approach.
+
+## Testing strategy
+
+### Go unit tests (~580+ tests)
+
+Located in `internal/*/` alongside the code they test.
+
+**Test files:**
+- `internal/config/config_test.go` — Config parsing
+- `internal/analyzer/type_walker_test.go` — Type walker (JSDoc, branded types, discriminants, generics)
+- `internal/analyzer/nestjs_test.go` — NestJS analyzer
+- `internal/codegen/codegen_test.go` — Companion generation
+- `internal/codegen/emitter_test.go` — Emitter
+- `internal/openapi/schema_test.go` — OpenAPI schemas
+- `internal/openapi/generator_test.go` — OpenAPI generator
+- `internal/openapi/integration_test.go` — End-to-end OpenAPI integration
+- `internal/buildcache/cache_test.go` — Build cache
+
+**Running tests:**
+```bash
+go test ./internal/... -count=1        # All unit tests
+go test ./internal/analyzer/... -v     # Specific package
+go test ./internal/analyzer/... -run TestTypeWalker -v  # Specific test
+```
+
+### E2e tests (101 tests, Vitest)
+
+Located in `e2e/compile.test.ts`.
+
+**What they test:**
+- Full pipeline (compilation + companions + OpenAPI)
+- Constraint validation
+- Branded types
+- Diagnostics and exit codes
+- Incremental builds
+- Post-processing cache
+- `@Returns()` decorator
+
+**Running tests:**
+```bash
+# Requires built binary (just build)
+pnpm test:e2e
+```
+
+The tests run the `tsgonest` binary as a subprocess and verify:
+- Output files exist and have correct content
+- Compiled JS can be executed in Node.js
+- Validation/serialization functions work correctly
+- Error messages are correct
+
+## Release process
+
+Releases are **tag-driven** and fully automated via GitHub Actions.
+
+### How to release
+
+1. **Merge your PR to main**
+2. **Tag the release** (patch/minor/major as appropriate):
+   ```bash
+   git checkout main && git pull
+   git tag v0.8.8
+   git push origin v0.8.8
+   ```
+3. **Monitor the release workflow** at [GitHub Actions](https://github.com/tsgonest/tsgonest/actions)
+
+### What the release workflow does
+
+`.github/workflows/release.yml` automatically:
+
+1. Runs the full test suite (unit + e2e) as a gate
+2. Generates changelog via git-cliff and commits it back to main
+3. Cross-compiles all 6 platform binaries:
+   - darwin-arm64, darwin-x64
+   - linux-arm64, linux-x64 (static, works on glibc + musl)
+   - win32-arm64, win32-x64
+4. Bumps `version` in every `packages/*/package.json`
+5. Builds TypeScript packages (runtime, types, migrate)
+6. Publishes all packages to npm via **OIDC Trusted Publishing** (no NPM_TOKEN needed)
+7. Creates a GitHub Release with binary assets and changelog body
+
+**Important:**
+- **Do NOT manually edit package.json versions** — the release workflow handles this
+- **Do NOT manually publish to npm** — OIDC Trusted Publishing handles auth
+- **Do NOT commit the submodule pointer** when you see `modified: typescript-go (new commits)` in git status
+
+### After a release
+
+Install the new version in downstream projects:
+```bash
+pnpm add -D tsgonest@latest
+```
+
+Monitor the release:
+```bash
+gh run list --limit 3
+# Or check the Actions tab on GitHub
+```
+
+## Common pitfalls
+
+1. **Modifying typescript-go without patches** — Changes will be lost on submodule update. Always use `patches/`.
+2. **Editing shim files directly** — They're generated. Regenerate with `just shim`.
+3. **Forgetting `go mod tidy`** — After adding new shim imports.
+4. **Recursive types in type walker** — Always use visited-type tracking to prevent infinite recursion.
+5. **tsgo API changes** — When updating the submodule, shims may break. Regenerate and fix.
+6. **E2e tests without built binary** — Always run `just build` before `pnpm test:e2e`.
+7. **OpenAPI output path** — Resolves relative to config file directory, not CWD.
+8. **JS string escaping** — Use `jsStringEscape()` when embedding strings in JS string literals.
+9. **Boolean representation** — TS `boolean` is `true | false` union — walker coalesces them.
+10. **Branded type detection** — `__tsgonest_*` phantom properties extracted as constraints; `"typia.tag"` also recognized.
+
+## Getting help
+
+If you need help or have questions:
+
+- Open an [issue](https://github.com/tsgonest/tsgonest/issues) on GitHub
+- Check the [documentation](https://tsgonest.dev)
+- Read [AGENTS.md](https://github.com/tsgonest/tsgonest/blob/main/AGENTS.md) for architecture details
+
+## Code of conduct
+
+Be respectful and constructive. We welcome contributions from everyone.
+
+## License
+
+By contributing to tsgonest, you agree that your contributions will be licensed under the [MIT License](https://github.com/tsgonest/tsgonest/blob/main/LICENSE.md).

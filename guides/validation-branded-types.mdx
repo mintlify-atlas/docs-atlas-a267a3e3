@@ -1,0 +1,480 @@
+---
+title: Branded Type Validation
+description: Type-safe validation constraints using phantom types from @tsgonest/types — full IDE autocomplete and compile-time safety.
+---
+
+Branded types from `@tsgonest/types` are tsgonest's **type-safe** validation approach. Attach constraints via TypeScript intersections (`string & Email`) to get full IDE autocomplete, type-level enforcement, and compile-time guarantees.
+
+## Installation
+
+```package-install
+@tsgonest/types
+```
+
+## Why Branded Types?
+
+<Steps>
+  <Step title="Type safety">
+    `string & Email` is a distinct type from `string`. The compiler prevents mixing them.
+  </Step>
+  <Step title="IDE autocomplete">
+    Type `& Min<` and your editor suggests all numeric constraints with inline docs.
+  </Step>
+  <Step title="Refactor-safe">
+    Rename a constraint and TypeScript finds all usages instantly.
+  </Step>
+  <Step title="Identical output">
+    Branded types and JSDoc tags produce the exact same validators. Choose based on preference.
+  </Step>
+</Steps>
+
+## Basic Constraints
+
+### String Validation
+
+```ts title="user.dto.ts"
+import { Email, MinLength, MaxLength, Pattern } from '@tsgonest/types';
+
+interface CreateUserDto {
+  email: string & Email;
+  name: string & MinLength<1> & MaxLength<255>;
+  username: string & Pattern<"^[a-z0-9-]+$">;
+}
+```
+
+Branded constraints are **phantom types** — they exist only at compile time and produce zero runtime code. The `Email` type is:
+
+```ts
+type Email = { readonly __tsgonest_format?: "email" };
+```
+
+The `__tsgonest_format` property is a phantom — it's optional and never accessed at runtime. tsgonest reads it during compilation to generate validators.
+
+### Numeric Validation
+
+```ts title="product.dto.ts"
+import { Min, Max, MultipleOf, Int, Positive } from '@tsgonest/types';
+
+interface CreateProductDto {
+  price: number & Min<0> & MultipleOf<0.01>;
+  rating: number & Min<1> & Max<5> & Int;
+  discount: number & Positive; // > 0
+}
+```
+
+Numeric constraints map to checks:
+
+- `Min<N>` → `value >= N`
+- `Max<N>` → `value <= N`
+- `Gt<N>` (greater than) → `value > N`
+- `Lt<N>` (less than) → `value < N`
+- `MultipleOf<N>` → `value % N === 0`
+- `Int` → ensures 32-bit integer
+
+### Array Validation
+
+Array constraints intersect with the **array type**, not the element type:
+
+```ts title="post.dto.ts"
+import { MinItems, MaxItems, UniqueItems, MinLength, MaxLength } from '@tsgonest/types';
+
+interface CreatePostDto {
+  title: string & MinLength<5> & MaxLength<200>;
+
+  // Array-level constraints: 1-10 unique tags
+  tags: string[] & MinItems<1> & MaxItems<10> & UniqueItems;
+
+  // Element-level + array-level constraints
+  emails: (string & Email)[] & MinItems<1> & MaxItems<50> & UniqueItems;
+}
+```
+
+<Warning>
+  Array constraints apply to the **collection**, so intersect with the full array type:
+
+  ```ts
+  // ✅ Correct — intersect with string[]
+  tags: string[] & MinItems<1>;
+
+  // ❌ Wrong — intersects with element type
+  tags: (string & MinItems<1>)[];
+  ```
+</Warning>
+
+## Format Aliases
+
+Common formats have short aliases:
+
+```ts
+import {
+  Email, Uuid, Url, IPv4, IPv6,
+  DateTime, DateOnly, Time,
+  Jwt, Ulid, Cuid, Cuid2, NanoId,
+} from '@tsgonest/types';
+
+interface EntityDto {
+  id: string & Uuid;
+  email: string & Email;
+  website: string & Url;
+  createdAt: string & DateTime; // ISO 8601
+  eventDate: string & DateOnly; // YYYY-MM-DD
+  token: string & Jwt;
+  shortId: string & NanoId;
+}
+```
+
+For formats without aliases, use the generic `Format<T>` type:
+
+```ts
+import { Format } from '@tsgonest/types';
+
+interface NetworkDto {
+  hostname: string & Format<"hostname">;
+  macAddress: string & Format<"mac">;
+  subnet: string & Format<"cidrv4">;
+}
+```
+
+## Numeric Type Aliases
+
+```ts
+import {
+  Int, SafeInt, Uint, Finite, Double,
+  Positive, Negative, NonNegative, NonPositive,
+} from '@tsgonest/types';
+
+interface StatsDto {
+  count: number & Int;           // 32-bit signed integer
+  index: number & Uint;          // 32-bit unsigned integer
+  bigCount: number & SafeInt;    // Safe integer (±2^53-1)
+  score: number & Finite;        // No Infinity/NaN
+  latitude: number & Min<-90> & Max<90>;
+  quantity: number & Positive;   // > 0
+  balance: number & NonNegative; // >= 0
+}
+```
+
+## Transforms
+
+Transforms run **before** validation:
+
+```ts
+import { Trim, ToLowerCase, ToUpperCase, Email, Pattern } from '@tsgonest/types';
+
+interface ContactDto {
+  email: string & Trim & Email;
+  query: string & ToLowerCase;
+  countryCode: string & ToUpperCase & Pattern<"^[A-Z]{2}$">;
+}
+```
+
+Transforms compose with constraints:
+
+```ts
+// Input: "  USER@EXAMPLE.COM  "
+// → Trim: "USER@EXAMPLE.COM"
+// → ToLowerCase: "user@example.com"
+// → Email validation: pass
+email: string & Trim & ToLowerCase & Email;
+```
+
+## Custom Error Messages
+
+Every constraint supports an extended form with custom errors:
+
+```ts
+import { Min, Max, Email, Format } from '@tsgonest/types';
+
+interface CreateUserDto {
+  age: number
+    & Min<{ value: 0; error: "Age cannot be negative" }>
+    & Max<{ value: 150; error: "Age seems unrealistic" }};
+
+  email: string & Format<{ type: "email"; error: "Please enter a valid email address" }>;
+
+  username: string & MinLength<{ value: 3; error: "Username must be at least 3 characters" }>;
+}
+```
+
+When validation fails, your custom message is used instead of the default.
+
+## Compound Constraints
+
+Use helper types for common patterns:
+
+```ts
+import { Length, Range, Between } from '@tsgonest/types';
+
+interface ConfigDto {
+  // Exact length: both MinLength and MaxLength
+  code: string & Length<6>;
+
+  // Numeric range: Min and Max
+  percentage: number & Range<{ min: 0; max: 100 }>;
+
+  // String length range: MinLength and MaxLength
+  bio: string & Between<{ min: 10; max: 500 }>;
+}
+```
+
+## Coercion for Query Parameters
+
+Query params arrive as strings. Use `Coerce` to convert them:
+
+```ts
+import { Coerce, Min, Max } from '@tsgonest/types';
+
+interface PaginationDto {
+  page: number & Coerce & Min<1>;
+  limit: number & Coerce & Min<1> & Max<100>;
+  active: boolean & Coerce;
+}
+```
+
+In NestJS:
+
+```ts
+@Get()
+findAll(@Query() query: PaginationDto) {
+  // query.page is a number (coerced from "42" → 42)
+  // query.active is a boolean (coerced from "true" → true)
+}
+```
+
+## Default Values
+
+```ts
+import { Default, Min, Max } from '@tsgonest/types';
+
+interface FilterDto {
+  page?: number & Default<1> & Min<1>;
+  limit?: number & Default<20> & Min<1> & Max<100>;
+  sortBy?: string & Default<"createdAt">;
+  ascending?: boolean & Default<true>;
+}
+```
+
+When a property is `undefined`, the default value is assigned before validation.
+
+## Custom Validators
+
+Reference validation functions via `Validate<typeof fn>`:
+
+```ts title="validators/credit-card.ts"
+export function isValidCard(value: string): boolean {
+  // Luhn algorithm
+  let sum = 0;
+  let alternate = false;
+  for (let i = value.length - 1; i >= 0; i--) {
+    let n = parseInt(value.charAt(i), 10);
+    if (alternate) {
+      n *= 2;
+      if (n > 9) n -= 9;
+    }
+    sum += n;
+    alternate = !alternate;
+  }
+  return sum % 10 === 0;
+}
+```
+
+```ts title="payment.dto.ts"
+import { Validate, Pattern } from '@tsgonest/types';
+import { isValidCard } from './validators/credit-card';
+
+interface PaymentDto {
+  cardNumber: string
+    & Pattern<"^[0-9]{13,19}$">
+    & Validate<typeof isValidCard>;
+
+  // With custom error
+  cvv: string & Validate<{
+    fn: typeof isValidCVV;
+    error: "Invalid CVV code";
+  }>;
+}
+```
+
+tsgonest resolves the function's source file and imports it in the generated companion.
+
+## Mixing JSDoc and Branded Types
+
+You can use both in the same codebase:
+
+```ts
+import { Email, Min, Max } from '@tsgonest/types';
+
+interface CreateUserDto {
+  // Branded type
+  email: string & Email;
+
+  // JSDoc tag
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  name: string;
+
+  // Branded type
+  age: number & Min<0> & Max<150>;
+}
+```
+
+Both produce identical validators. Choose based on preference for each property.
+
+## Complete Real-World Example
+
+Here's a comprehensive DTO using many branded types:
+
+```ts title="create-order.dto.ts"
+import {
+  Email, Uuid, Trim, ToUpperCase, Pattern, Format,
+  MinLength, MaxLength, Min, Max, MultipleOf, Int,
+  MinItems, MaxItems, Default,
+} from '@tsgonest/types';
+
+/** Order line item */
+interface OrderItem {
+  productId: string & Uuid;
+  quantity: number & Int & Min<1> & Max<1000>;
+  unitPrice: number & Min<0> & MultipleOf<0.01>;
+}
+
+/** Create order request */
+interface CreateOrderDto {
+  customerEmail: string & Trim & Email;
+  shippingAddress: string & MinLength<1> & MaxLength<500>;
+  items: OrderItem[] & MinItems<1> & MaxItems<100>;
+  promoCode?: string & ToUpperCase & Pattern<"^[A-Z0-9-]+$">;
+  giftMessage?: string & MaxLength<500>;
+  expressShipping?: boolean & Default<false>;
+  deliveryDate?: string & Format<"date">;
+}
+```
+
+Running `tsgonest build` produces:
+
+- Full recursive validation (order → items)
+- String trimming and uppercasing
+- Email, UUID, date format checks
+- Numeric range and precision validation
+- Array length constraints
+- Default value injection
+
+All with full TypeScript type safety and IDE autocomplete.
+
+## Type-Level Enforcement
+
+Branded types create **distinct types** at the type level:
+
+```ts
+import { Email, Min, Max } from '@tsgonest/types';
+
+type UserEmail = string & Email;
+type Age = number & Min<0> & Max<150>;
+
+function sendEmail(to: UserEmail) {
+  // ...
+}
+
+const rawString: string = "user@example.com";
+sendEmail(rawString); // ❌ Type error: string not assignable to string & Email
+
+const validated: UserEmail = rawString as UserEmail; // ✅ Explicit assertion
+sendEmail(validated);
+```
+
+This prevents accidentally passing unvalidated data to functions expecting validated input.
+
+## Combining with NestJS
+
+In NestJS controllers, validation is injected at compile time:
+
+```ts title="orders.controller.ts"
+import { Controller, Post, Body } from '@nestjs/common';
+import type { CreateOrderDto } from './create-order.dto';
+
+@Controller('orders')
+export class OrdersController {
+  @Post()
+  create(@Body() body: CreateOrderDto) {
+    // body is validated before this line runs
+    return this.ordersService.create(body);
+  }
+}
+```
+
+After `tsgonest build`:
+
+```js title="dist/orders.controller.js"
+import { assertCreateOrderDto } from './create-order.dto.CreateOrderDto.tsgonest.js';
+
+class OrdersController {
+  create(body) {
+    body = assertCreateOrderDto(body); // ← injected
+    return this.ordersService.create(body);
+  }
+}
+```
+
+## Tips & Tricks
+
+<Accordion title="Prefer short aliases for readability">
+  ```ts
+  // ✅ Clean and readable
+  import { Email, Min, Max, Int } from '@tsgonest/types';
+  age: number & Min<0> & Max<150> & Int;
+
+  // ❌ Verbose
+  import { Format, Minimum, Maximum, Type } from '@tsgonest/types';
+  age: number & Minimum<0> & Maximum<150> & Type<"int32">;
+  ```
+</Accordion>
+
+<Accordion title="Use type aliases for reusable constraints">
+  ```ts
+  import { Email, MinLength, MaxLength } from '@tsgonest/types';
+
+  type ValidatedEmail = string & Email;
+  type Username = string & MinLength<3> & MaxLength<30>;
+  type Age = number & Min<0> & Max<150>;
+
+  interface UserDto {
+    email: ValidatedEmail;
+    username: Username;
+    age: Age;
+  }
+  ```
+</Accordion>
+
+<Accordion title="Combine with Partial for update DTOs">
+  ```ts
+  interface CreateUserDto {
+    email: string & Email;
+    name: string & MinLength<1> & MaxLength<255>;
+    age: number & Min<0> & Max<150>;
+  }
+
+  // All fields optional, constraints still apply when present
+  type UpdateUserDto = Partial<CreateUserDto>;
+  ```
+</Accordion>
+
+<Accordion title="Array constraints go on the array type">
+  ```ts
+  // ✅ Correct
+  tags: string[] & MinItems<1> & MaxItems<10>;
+
+  // ✅ Also correct — element + array constraints
+  emails: (string & Email)[] & MinItems<1> & UniqueItems;
+
+  // ❌ Wrong — constraint on element, not array
+  tags: (string & MinItems<1>)[];
+  ```
+</Accordion>
+
+## Next Steps
+
+- [Array Validation](/guides/validation-arrays) — Deep dive into array constraints
+- [Custom Validators](/guides/validation-custom) — Write custom validation functions
+- [JSDoc Validation](/guides/validation-jsdoc) — Zero-dependency alternative approach

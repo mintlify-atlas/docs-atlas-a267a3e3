@@ -1,0 +1,477 @@
+---
+title: tsgonest build
+description: Compile TypeScript with companions and OpenAPI generation
+---
+
+## Usage
+
+```bash
+tsgonest build [flags]
+```
+
+Compiles TypeScript using the tsgo compiler, generates companion files for runtime validation and serialization, and produces an OpenAPI 3.2 document from NestJS controllers.
+
+## Flags
+
+### tsgonest-Specific Flags
+
+<ParamField path="--project" flag="-p" type="string" default="tsconfig.json">
+  Path to tsconfig.json
+  
+  ```bash
+  tsgonest build --project tsconfig.build.json
+  tsgonest build -p apps/api/tsconfig.json
+  ```
+</ParamField>
+
+<ParamField path="--config" type="string">
+  Path to tsgonest config file (.ts or .json)
+  
+  If not specified, auto-discovers `tsgonest.config.ts` or `tsgonest.config.json` in the current directory.
+  
+  ```bash
+  tsgonest build --config tsgonest.config.ts
+  tsgonest build --config configs/prod.json
+  ```
+</ParamField>
+
+<ParamField path="--clean" type="boolean" default={false}>
+  Clean output directory before building
+  
+  Removes all files in `outDir`, including `.tsbuildinfo` and post-processing cache. Forces a complete rebuild.
+  
+  ```bash
+  tsgonest build --clean
+  ```
+  
+  <Warning>
+    The `--clean` flag deletes the `.tsbuildinfo` file, which disables incremental compilation for this build. Subsequent builds will still use incremental compilation if `incremental: true` is set in tsconfig.json.
+  </Warning>
+</ParamField>
+
+<ParamField path="--assets" type="string">
+  Glob pattern for static assets to copy to output
+  
+  Copies matching files from source to output directory, preserving relative paths.
+  
+  ```bash
+  tsgonest build --assets '**/*.json'
+  tsgonest build --assets 'templates/**/*'
+  tsgonest build --assets '{**/*.json,**/*.yaml}'
+  ```
+  
+  <Note>
+    Assets are copied relative to the working directory, not relative to `rootDir`. If you need complex asset handling, consider a post-build script.
+  </Note>
+</ParamField>
+
+<ParamField path="--no-check" type="boolean" default={false}>
+  Skip type checking (syntax errors still reported)
+  
+  Significantly faster builds, but type errors won't be caught. Useful for rapid iteration.
+  
+  ```bash
+  tsgonest build --no-check
+  ```
+</ParamField>
+
+<ParamField path="--dump-metadata" type="boolean" default={false}>
+  Dump type metadata as JSON to stdout (debug)
+  
+  Outputs internal type metadata structure for all analyzed types. Useful for debugging companion generation issues.
+  
+  ```bash
+  tsgonest build --dump-metadata > metadata.json
+  ```
+  
+  <Warning>
+    This is a debug flag. It skips emit and OpenAPI generation, only analyzing types and printing metadata.
+  </Warning>
+</ParamField>
+
+### TypeScript Compiler Flags
+
+All flags not recognized by tsgonest are forwarded to the TypeScript compiler (tsgo). This includes:
+
+<ParamField path="--strict" type="boolean">
+  Enable all strict type checking options
+  
+  ```bash
+  tsgonest build --strict
+  ```
+</ParamField>
+
+<ParamField path="--noEmit" type="boolean">
+  Do not emit outputs (type checking only)
+  
+  ```bash
+  tsgonest build --noEmit
+  ```
+</ParamField>
+
+<ParamField path="--target" type="string">
+  ECMAScript target version (ES3, ES5, ES2015, ES2022, ESNext, etc.)
+  
+  ```bash
+  tsgonest build --target es2022
+  ```
+</ParamField>
+
+<ParamField path="--module" type="string">
+  Module system (commonjs, es2015, es2020, esnext, node16, nodenext)
+  
+  ```bash
+  tsgonest build --module nodenext
+  ```
+</ParamField>
+
+<ParamField path="--sourceMap" type="boolean">
+  Generate source maps
+  
+  ```bash
+  tsgonest build --sourceMap
+  ```
+</ParamField>
+
+<ParamField path="--declaration" type="boolean">
+  Generate .d.ts declaration files
+  
+  ```bash
+  tsgonest build --declaration
+  ```
+</ParamField>
+
+<ParamField path="--inlineSources" type="boolean">
+  Include source code in source maps
+  
+  ```bash
+  tsgonest build --sourceMap --inlineSources
+  ```
+</ParamField>
+
+<Info>
+  See the [TypeScript Compiler Options](https://www.typescriptlang.org/docs/handbook/compiler-options.html) documentation for a complete list of available flags.
+</Info>
+
+## Examples
+
+### Basic Build
+
+```bash
+tsgonest build
+```
+
+Compiles with default settings (tsconfig.json, auto-discovered config).
+
+### Production Build
+
+```bash
+tsgonest build --clean --project tsconfig.build.json
+```
+
+Clean build with production tsconfig.
+
+### Build with Assets
+
+```bash
+tsgonest build --assets '**/*.{json,yaml,txt}'
+```
+
+Copies all JSON, YAML, and text files to output directory.
+
+### Fast Iteration Build
+
+```bash
+tsgonest build --no-check
+```
+
+Skips type checking for maximum speed during development.
+
+### Type Check Only
+
+```bash
+tsgonest build --noEmit
+```
+
+Runs type checking without producing output files.
+
+### Custom Configuration
+
+```bash
+tsgonest build --config tsgonest.prod.ts --project tsconfig.build.json
+```
+
+Uses production config and build tsconfig.
+
+### Mixed Flags
+
+```bash
+tsgonest build --clean --strict --sourceMap --assets '**/*.json'
+```
+
+Combines tsgonest flags with TypeScript compiler flags.
+
+## Incremental Compilation
+
+When `incremental: true` or `composite: true` is set in tsconfig.json, tsgonest uses incremental compilation:
+
+- Only changed files are type-checked and emitted
+- Build state is persisted to `.tsbuildinfo`
+- Subsequent builds are much faster
+
+```json tsconfig.json
+{
+  "compilerOptions": {
+    "incremental": true,
+    "outDir": "dist"
+  }
+}
+```
+
+```bash Terminal
+$ tsgonest build
+incremental build enabled
+emitted 0 file(s)  # No changes detected
+no changes detected, outputs up to date
+```
+
+## Output
+
+### Generated Files
+
+The build command produces:
+
+1. **JavaScript files** (`.js`) - Compiled TypeScript
+2. **Declaration files** (`.d.ts`) - Type definitions (if `declaration: true`)
+3. **Source maps** (`.js.map`) - Debug mappings (if `sourceMap: true`)
+4. **Companion files** (`.tsgonest.js`, `.tsgonest.d.ts`) - Runtime validators/serializers
+5. **Helpers file** (`_tsgonest_helpers.js`) - Shared runtime utilities
+6. **OpenAPI document** (`openapi.json`) - API specification
+
+### Directory Structure
+
+```
+dist/
+├── main.js
+├── main.d.ts
+├── user.dto.js
+├── user.dto.d.ts
+├── user.dto.UserDto.tsgonest.js      # Companion
+├── user.dto.UserDto.tsgonest.d.ts    # Companion types
+├── _tsgonest_helpers.js               # Shared helpers
+└── openapi.json                       # OpenAPI spec
+```
+
+## Build Cache
+
+tsgonest maintains two levels of caching:
+
+### TypeScript Cache (`.tsbuildinfo`)
+
+Managed by the TypeScript compiler for incremental builds. Deleted by `--clean`.
+
+### Post-Processing Cache (`.tsgonest-cache`)
+
+Tracks companion files and OpenAPI generation. Automatically invalidated when:
+
+- Config file changes
+- Source files change
+- `--clean` is used
+
+Location: `<outDir>/.tsgonest-cache`
+
+## Diagnostics and Error Handling
+
+### Exit Codes
+
+<ResponseField name="0" type="Success">
+  No errors, all files emitted successfully
+  
+  ```bash Terminal
+  $ tsgonest build
+  emitted 10 file(s)
+  $ echo $?
+  0
+  ```
+</ResponseField>
+
+<ResponseField name="1" type="Errors Present">
+  Type or syntax errors found, but outputs were generated
+  
+  ```bash Terminal
+  $ tsgonest build
+  user.dto.ts(5,12): error TS2741: Property 'email' is missing
+  emitted 10 file(s)
+  $ echo $?
+  1
+  ```
+</ResponseField>
+
+<ResponseField name="2" type="Emit Skipped">
+  Errors found and `noEmitOnError` prevented emit
+  
+  ```bash Terminal
+  $ tsgonest build
+  user.dto.ts(5,12): error TS2741: Property 'email' is missing
+  no files emitted (noEmitOnError)
+  $ echo $?
+  2
+  ```
+</ResponseField>
+
+### Diagnostic Format
+
+Diagnostics include:
+
+- File path and position (line:column)
+- Error code (e.g., TS2741)
+- Error message
+- Code snippet with error highlighting (in TTY mode)
+
+```bash Terminal
+user.dto.ts(12,5): error TS2741: Property 'email' is missing in type 
+  '{ name: string; }' but required in type 'User'.
+
+  10 | export interface User {
+  11 |   name: string;
+> 12 |   email: string;
+     |   ^^^^^
+  13 | }
+```
+
+## Configuration Integration
+
+The build command respects all settings in `tsgonest.config.ts`:
+
+```typescript tsgonest.config.ts
+import { defineConfig } from "tsgonest";
+
+export default defineConfig({
+  controllers: {
+    include: ["src/**/*.controller.ts"],
+  },
+  transforms: {
+    validation: true,
+    serialization: true,
+  },
+  openapi: {
+    output: "dist/openapi.json",
+    title: "My API",
+    version: "1.0.0",
+  },
+  sdk: {
+    output: "./sdk",
+  },
+});
+```
+
+See [Configuration](/config/overview) for all available options.
+
+## Timing Report
+
+At the end of each build, tsgonest prints a timing breakdown:
+
+```bash Terminal
+Build time: 1.234s
+  TSConfig: 45ms
+  Program: 234ms
+  Diagnostics: 456ms
+  Emit: 123ms
+  Companions: 89ms
+  Controllers: 67ms
+  OpenAPI: 34ms
+```
+
+Use this to identify bottlenecks in large projects.
+
+## CI/CD Integration
+
+### GitHub Actions
+
+```yaml .github/workflows/build.yml
+name: Build
+on: [push]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: pnpm/action-setup@v2
+      - run: pnpm install
+      - run: pnpm tsgonest build --clean
+```
+
+### Exit Code Handling
+
+```bash
+#!/bin/bash
+tsgonest build
+EXIT_CODE=$?
+
+if [ $EXIT_CODE -eq 2 ]; then
+  echo "Build failed: noEmitOnError triggered"
+  exit 1
+elif [ $EXIT_CODE -eq 1 ]; then
+  echo "Build completed with errors"
+  exit 1
+else
+  echo "Build succeeded"
+fi
+```
+
+## Troubleshooting
+
+### "no files emitted" on Incremental Build
+
+If incremental builds aren't detecting changes:
+
+1. Delete `.tsbuildinfo`: `rm tsconfig.tsbuildinfo`
+2. Run a clean build: `tsgonest build --clean`
+
+### Path Aliases Not Resolved
+
+Ensure `paths` is configured in tsconfig.json:
+
+```json tsconfig.json
+{
+  "compilerOptions": {
+    "baseUrl": "./",
+    "paths": {
+      "@/*": ["src/*"]
+    }
+  }
+}
+```
+
+### Companion Files Not Generated
+
+Check that:
+
+1. `transforms.validation` or `transforms.serialization` is enabled in config
+2. Types are referenced by controllers or marked with `tsgonest.validate<T>()`
+3. Types don't have syntax errors (companions are skipped for files with syntax errors)
+
+### OpenAPI Not Generated
+
+Verify:
+
+1. `openapi.output` is set in config
+2. `controllers.include` matches your controller files
+3. Controllers use `@Controller()` decorator
+
+## See Also
+
+<CardGroup cols={2}>
+  <Card title="Dev Command" icon="rotate" href="/cli/dev">
+    Watch mode with hot reload
+  </Card>
+  <Card title="Configuration" icon="gear" href="/config/overview">
+    Configure build behavior
+  </Card>
+  <Card title="Companion Files" icon="file-code" href="/concepts/compilation#companion-files">
+    Learn about generated companions
+  </Card>
+  <Card title="OpenAPI" icon="book" href="/concepts/openapi">
+    OpenAPI generation guide
+  </Card>
+</CardGroup>

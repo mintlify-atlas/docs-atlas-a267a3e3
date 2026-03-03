@@ -1,0 +1,141 @@
+{
+  "projectType": "cli-tool",
+  "projectName": "tsgonest",
+  "projectDescription": "Native-speed TypeScript compiler with generated validation, serialization, and OpenAPI for NestJS",
+  "theme": "aspen",
+  "primaryColor": "#5B21B6",
+  "lightColor": "#8B5CF6",
+  "darkColor": "#4C1D95",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/compilation",
+              "concepts/validation",
+              "concepts/serialization",
+              "concepts/openapi"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/validation-jsdoc",
+              "guides/validation-branded-types",
+              "guides/validation-arrays",
+              "guides/validation-custom",
+              "guides/serialization-runtime",
+              "guides/openapi-controllers",
+              "guides/openapi-parameters",
+              "guides/openapi-returns",
+              "guides/openapi-sse",
+              "guides/openapi-versioning"
+            ]
+          },
+          {
+            "group": "CLI Reference",
+            "pages": [
+              "cli/overview",
+              "cli/build",
+              "cli/dev",
+              "cli/migrate",
+              "cli/sdk"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "config/overview",
+              "config/options"
+            ]
+          },
+          {
+            "group": "Migration",
+            "pages": [
+              "migration/from-nestia",
+              "migration/from-class-validator"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Runtime",
+            "pages": [
+              "api/runtime/define-config",
+              "api/runtime/validation-error",
+              "api/runtime/form-data"
+            ]
+          },
+          {
+            "group": "Types",
+            "pages": [
+              "api/types/overview",
+              "api/types/string-tags",
+              "api/types/numeric-tags",
+              "api/types/array-tags"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Resources",
+        "groups": [
+          {
+            "group": "Learn More",
+            "pages": [
+              "resources/architecture",
+              "resources/comparisons",
+              "resources/changelog",
+              "resources/contributing"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Native-speed TypeScript compilation via typescript-go",
+    "Compile-time validator and serializer generation from types",
+    "OpenAPI 3.2 generation from static analysis",
+    "Watch mode with auto-restart",
+    "JSDoc and branded type constraint support",
+    "Standard Schema v1 wrappers for framework interop",
+    "Zero runtime decorators - all compile-time",
+    "Migration tooling from class-validator and nestia"
+  ],
+  "publicApiSurface": [
+    "tsgonest build",
+    "tsgonest dev",
+    "tsgonest migrate",
+    "tsgonest sdk",
+    "@tsgonest/runtime: defineConfig",
+    "@tsgonest/runtime: TsgonestValidationError",
+    "@tsgonest/runtime: FormDataBody",
+    "@tsgonest/runtime: FormDataInterceptor",
+    "@tsgonest/types: tags.Email",
+    "@tsgonest/types: tags.Min",
+    "@tsgonest/types: tags.Max",
+    "@tsgonest/types: tags.MinLength",
+    "@tsgonest/types: tags.MaxLength",
+    "@tsgonest/types: tags.Pattern",
+    "@tsgonest/types: tags.Format",
+    "@tsgonest/types: tags.Trim",
+    "@tsgonest/types: tags.MinItems",
+    "@tsgonest/types: tags.MaxItems",
+    "@tsgonest/types: tags.UniqueItems"
+  ]
+}
